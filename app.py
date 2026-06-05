@@ -27,7 +27,6 @@ BUDGET_CAPITAL = {
     '고장변압기 교체': ('310400213200087', 0),
     '재해설비 피해복구': ('70H120234279', 0),
     '가공설비고장복구': ('310400219200086', 0),
-    '수선비/자본연계(가공보강)': ('S20245-575N-2019', 0),
 }
 
 CAPITAL_CAT_MAP = {
@@ -117,7 +116,215 @@ def _date_str(val):
 
 
 # ──────────────────────────────────────────────
-# 3. 파싱 + 분석
+# 3-A. AI 분석 함수 (통계/규칙 기반)
+# ──────────────────────────────────────────────
+def _predict_yearend(comparison, budget_dict):
+    """경과 월수 기반 연말 예상 집행액 추정"""
+    now = datetime.now()
+    month = now.month
+    elapsed = month / 12  # 연간 경과 비율
+
+    if elapsed <= 0:
+        elapsed = 1 / 12
+
+    confidence = '높음' if month >= 9 else ('보통' if month >= 6 else '낮음')
+
+    predictions = []
+    total_budget = sum(v[1] * 1e6 for v in budget_dict.values())
+    total_current_exec = 0
+    total_predicted = 0
+
+    for r in comparison:
+        a = r['배정예산']
+        d = r['집행실적']
+        f = r['진행중공사비']
+        total_current_exec += d
+
+        # 연말 예측: 현재 집행실적을 경과비율로 나눈 값
+        if d > 0:
+            projected = round(d / elapsed)
+        else:
+            projected = f  # 집행실적 없으면 진행중공사비만
+
+        # 진행중공사비 반영 (최소 집행실적 + 진행중공사비)
+        projected = max(projected, d + f)
+        total_predicted += projected
+
+        risk = '초과위험' if a > 0 and projected > a else ('주의' if a > 0 and projected > a * 0.9 else '정상')
+
+        predictions.append({
+            '예산과목': r['예산과목'],
+            '배정예산': a,
+            '현재집행': d,
+            '연말예측': projected,
+            '예측집행율': round(projected / a * 100, 1) if a else 0,
+            '위험도': risk,
+        })
+
+    return {
+        'month': month,
+        'elapsed_pct': round(elapsed * 100, 1),
+        'confidence': confidence,
+        'total_budget': total_budget,
+        'total_current_exec': total_current_exec,
+        'total_predicted': total_predicted,
+        'predicted_rate': round(total_predicted / total_budget * 100, 1) if total_budget else 0,
+        'items': predictions,
+    }
+
+
+def _detect_anomalies(comparison, budget_dict):
+    """예산 집행 패턴 이상 탐지"""
+    now = datetime.now()
+    month = now.month
+    expected_rate = month / 12 * 100  # 시간 비례 기대 집행율
+
+    anomalies = []
+
+    for r in comparison:
+        a = r['배정예산']
+        name = r['예산과목']
+        exec_rate = r['집행율']
+        fc_rate = r['예상집행율']
+
+        if a <= 0:
+            continue
+
+        # 시간 대비 과다 집행
+        if exec_rate > expected_rate + 15:
+            anomalies.append({
+                'level': 'danger',
+                'category': name,
+                'message': f'시간 대비 과다 집행 (집행율 {exec_rate}% vs 기대 {expected_rate:.0f}%)',
+                'detail': f'현재 {month}월 기준 기대집행율 {expected_rate:.0f}% 대비 {exec_rate - expected_rate:.1f}%p 초과',
+            })
+
+        # 예산 초과 위험
+        if fc_rate > 100:
+            anomalies.append({
+                'level': 'danger',
+                'category': name,
+                'message': f'예산 초과 (예상집행율 {fc_rate}%)',
+                'detail': f'예상집행이 배정예산을 {fc_rate - 100:.1f}% 초과',
+            })
+        elif fc_rate > 90:
+            anomalies.append({
+                'level': 'warning',
+                'category': name,
+                'message': f'예산 초과 주의 (예상집행율 {fc_rate}%)',
+                'detail': f'배정예산 소진율 {fc_rate}%로 초과 가능성 있음',
+            })
+
+        # 시간 대비 과소 집행 (하반기부터 체크)
+        if month >= 6 and exec_rate < expected_rate - 30 and a >= 1_000_000:
+            anomalies.append({
+                'level': 'info',
+                'category': name,
+                'message': f'집행 부진 (집행율 {exec_rate}% vs 기대 {expected_rate:.0f}%)',
+                'detail': f'배정예산 대비 집행이 느림 - 하반기 집중 집행 필요 가능성',
+            })
+
+    # 위험도순 정렬
+    order = {'danger': 0, 'warning': 1, 'info': 2}
+    anomalies.sort(key=lambda x: order.get(x['level'], 9))
+    return anomalies
+
+
+def _generate_report(cap_comp, rev_comp, cap_pred, rev_pred, cap_anomalies, rev_anomalies,
+                     budget_cap, budget_rev):
+    """예산 현황 보고서 텍스트 생성"""
+    now = datetime.now()
+    date_str = now.strftime('%Y년 %m월 %d일')
+    month = now.month
+    elapsed_pct = round(month / 12 * 100, 1)
+
+    lines = []
+    lines.append('=' * 50)
+    lines.append('    배전공사 예산 집행 현황 보고서')
+    lines.append('=' * 50)
+    lines.append(f'기준일: {date_str} (연간 진행율 {elapsed_pct}%)')
+    lines.append('')
+
+    # 자본
+    tc_budget = sum(v[1] * 1e6 for v in budget_cap.values())
+    tc_exec = sum(r['집행실적'] for r in cap_comp)
+    tc_forecast = sum(r['예상집행'] for r in cap_comp)
+    tc_rate = round(tc_exec / tc_budget * 100, 1) if tc_budget else 0
+    tc_fc_rate = round(tc_forecast / tc_budget * 100, 1) if tc_budget else 0
+
+    lines.append('■ 자본예산 현황')
+    lines.append(f'  - 배정예산: {tc_budget / 1e8:.1f}억원')
+    lines.append(f'  - 집행실적: {tc_exec / 1e8:.1f}억원 (집행율 {tc_rate}%)')
+    lines.append(f'  - 예상집행: {tc_forecast / 1e8:.1f}억원 (예상집행율 {tc_fc_rate}%)')
+    if cap_pred:
+        lines.append(f'  - 연말 예측: {cap_pred["total_predicted"] / 1e8:.1f}억원 (신뢰도: {cap_pred["confidence"]})')
+
+    # 자본 주요 항목
+    cap_over = [r for r in cap_comp if r['예상집행율'] > 90 and r['배정예산'] > 0]
+    if cap_over:
+        lines.append(f'  - 주의 항목 ({len(cap_over)}건):')
+        for r in cap_over:
+            lines.append(f'    * {r["예산과목"]}: 예상집행율 {r["예상집행율"]}%')
+    lines.append('')
+
+    # 손익
+    tr_budget = sum(v[1] * 1e6 for v in budget_rev.values())
+    tr_exec = sum(r['집행실적'] for r in rev_comp)
+    tr_forecast = sum(r['예상집행'] for r in rev_comp)
+    tr_rate = round(tr_exec / tr_budget * 100, 1) if tr_budget else 0
+    tr_fc_rate = round(tr_forecast / tr_budget * 100, 1) if tr_budget else 0
+
+    lines.append('■ 손익예산 현황')
+    lines.append(f'  - 배정예산: {tr_budget / 1e8:.1f}억원')
+    lines.append(f'  - 집행실적: {tr_exec / 1e8:.1f}억원 (집행율 {tr_rate}%)')
+    lines.append(f'  - 예상집행: {tr_forecast / 1e8:.1f}억원 (예상집행율 {tr_fc_rate}%)')
+    if rev_pred:
+        lines.append(f'  - 연말 예측: {rev_pred["total_predicted"] / 1e8:.1f}억원 (신뢰도: {rev_pred["confidence"]})')
+
+    rev_over = [r for r in rev_comp if r['예상집행율'] > 90 and r['배정예산'] > 0]
+    if rev_over:
+        lines.append(f'  - 주의 항목 ({len(rev_over)}건):')
+        for r in rev_over:
+            lines.append(f'    * {r["예산과목"]}: 예상집행율 {r["예상집행율"]}%')
+    lines.append('')
+
+    # 이상 탐지
+    all_anomalies = cap_anomalies + rev_anomalies
+    if all_anomalies:
+        lines.append(f'■ 이상 탐지 결과 ({len(all_anomalies)}건)')
+        level_label = {'danger': '위험', 'warning': '주의', 'info': '정보'}
+        for a in all_anomalies:
+            lbl = level_label.get(a['level'], '정보')
+            section = '자본' if a in cap_anomalies else '손익'
+            lines.append(f'  [{lbl}] [{section}] {a["category"]}: {a["message"]}')
+    else:
+        lines.append('■ 이상 탐지 결과: 특이사항 없음')
+    lines.append('')
+
+    # 종합 의견
+    lines.append('■ 종합 의견')
+    danger_cnt = sum(1 for a in all_anomalies if a['level'] == 'danger')
+    warning_cnt = sum(1 for a in all_anomalies if a['level'] == 'warning')
+    if danger_cnt > 0:
+        lines.append(f'  - 위험 항목 {danger_cnt}건 감지. 예산 초과 방지를 위한 긴급 점검 필요.')
+    if warning_cnt > 0:
+        lines.append(f'  - 주의 항목 {warning_cnt}건. 하반기 집행 계획 재검토 권고.')
+    if danger_cnt == 0 and warning_cnt == 0:
+        lines.append('  - 전체적으로 예산 집행이 정상 범위 내에 있습니다.')
+
+    remaining_months = 12 - month
+    if remaining_months > 0:
+        lines.append(f'  - 잔여 기간: {remaining_months}개월')
+
+    lines.append('')
+    lines.append('=' * 50)
+    lines.append(f'※ 본 보고서는 {date_str} 기준 자동 생성되었습니다.')
+
+    return '\n'.join(lines)
+
+
+# ──────────────────────────────────────────────
+# 3-B. 파싱 + 분석
 # ──────────────────────────────────────────────
 def parse_and_analyze(filepath):
     """엑셀 파일을 파싱하여 자본/손익 분리 분석 결과를 반환한다."""
@@ -417,6 +624,16 @@ def parse_and_analyze(filepath):
     cap_summary = _totals(cap_comparison, BUDGET_CAPITAL)
     rev_summary = _totals(rev_comparison, BUDGET_REVENUE)
 
+    # ── AI 분석 ──
+    cap_pred = _predict_yearend(cap_comparison, BUDGET_CAPITAL)
+    rev_pred = _predict_yearend(rev_comparison, BUDGET_REVENUE)
+    cap_anomalies = _detect_anomalies(cap_comparison, BUDGET_CAPITAL)
+    rev_anomalies = _detect_anomalies(rev_comparison, BUDGET_REVENUE)
+    report = _generate_report(cap_comparison, rev_comparison,
+                               cap_pred, rev_pred,
+                               cap_anomalies, rev_anomalies,
+                               BUDGET_CAPITAL, BUDGET_REVENUE)
+
     return {
         'capital': {
             'summary': cap_summary,
@@ -433,6 +650,17 @@ def parse_and_analyze(filepath):
             'budget_sheets': {k: v for k, v in budget_sheets.items() if k == '수선비'},
         },
         'projects': projects[:500],
+        'ai_analysis': {
+            'capital': {
+                'predictions': cap_pred,
+                'anomalies': cap_anomalies,
+            },
+            'revenue': {
+                'predictions': rev_pred,
+                'anomalies': rev_anomalies,
+            },
+            'report': report,
+        },
     }
 
 
@@ -553,6 +781,44 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 .empty-state .es-btn{margin-top:8px;padding:10px 28px;background:var(--orange);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;transition:background .15s}
 .empty-state .es-btn:hover{background:var(--orange-light)}
 
+/* ── AI Panel ── */
+.ai-panel{background:linear-gradient(135deg,#F0F4FF 0%,#EBF5FF 50%,#F5F0FF 100%);border:1px solid #C7D2FE;border-radius:10px;padding:18px 20px;margin:16px 0;position:relative;overflow:hidden}
+.ai-panel::before{content:'';position:absolute;top:0;left:0;width:4px;height:100%;background:linear-gradient(180deg,#6366F1,#8B5CF6)}
+.ai-panel .ai-header{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:13px;font-weight:700;color:#4338CA}
+.ai-panel .ai-header .ai-icon{width:22px;height:22px;background:linear-gradient(135deg,#6366F1,#8B5CF6);border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800}
+.ai-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:14px}
+.ai-stat{background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #E0E7FF}
+.ai-stat .ai-label{font-size:10px;color:var(--text3);font-weight:600;margin-bottom:2px}
+.ai-stat .ai-value{font-size:16px;font-weight:800;color:var(--text)}
+.ai-stat .ai-sub{font-size:10px;color:var(--text3);margin-top:2px}
+.ai-alerts{display:flex;flex-direction:column;gap:6px}
+.ai-alert{display:flex;align-items:flex-start;gap:8px;padding:8px 12px;border-radius:6px;font-size:11px;line-height:1.5}
+.ai-alert.danger{background:#FEF2F2;border:1px solid #FECACA;color:#991B1B}
+.ai-alert.warning{background:#FFFBEB;border:1px solid #FDE68A;color:#92400E}
+.ai-alert.info{background:#EFF6FF;border:1px solid #BFDBFE;color:#1E40AF}
+.ai-alert .ai-alert-icon{flex-shrink:0;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#fff}
+.ai-alert.danger .ai-alert-icon{background:#EF4444}
+.ai-alert.warning .ai-alert-icon{background:#F59E0B}
+.ai-alert.info .ai-alert-icon{background:#3B82F6}
+.ai-alert .ai-alert-text{flex:1}
+.ai-alert .ai-alert-title{font-weight:700;font-size:11px}
+.ai-alert .ai-alert-detail{font-size:10px;opacity:.8;margin-top:1px}
+
+/* ── Report Modal ── */
+.modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:9999;justify-content:center;align-items:center}
+.modal-overlay.on{display:flex}
+.modal-box{background:#fff;border-radius:12px;width:90%;max-width:700px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal-head{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)}
+.modal-head h2{font-size:15px;color:var(--text);font-weight:700}
+.modal-head .modal-actions{display:flex;gap:6px}
+.modal-head button{padding:6px 14px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:#fff;color:var(--text);transition:all .15s}
+.modal-head button:hover{background:#F8FAFC}
+.modal-head .btn-copy{background:var(--navy2);color:#fff;border-color:var(--navy2)}
+.modal-head .btn-copy:hover{background:var(--navy-light)}
+.modal-head .btn-close{background:transparent}
+.modal-body{padding:20px;overflow-y:auto;flex:1}
+.modal-body pre{white-space:pre-wrap;word-break:break-all;font-family:'Malgun Gothic','Apple SD Gothic Neo',monospace;font-size:12px;line-height:1.8;color:var(--text)}
+
 /* ── Responsive ── */
 @media(max-width:1200px){.cards{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}}
@@ -566,6 +832,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <span class="sp" id="sp"></span>
 <span id="fn" style="font-size:11px;opacity:.8"></span>
 <span id="today" style="font-size:11px;opacity:.8"></span>
+<button class="ubtn" id="reportBtn" onclick="openReport()" style="display:none">&#128196; 보고서</button>
 <button class="ubtn" id="refreshBtn" onclick="doRefresh()" style="display:none">&#8635; 새로고침</button>
 <label class="ubtn ubtn-primary">파일 업로드<input type="file" id="fi" accept=".xlsx,.xls" style="display:none"></label>
 </div>
@@ -603,6 +870,11 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="cd c3"><div class="lb">진행중공사비 (F)</div><div class="vl" id="capF">-</div><div class="sb">미준공 금액</div></div>
 <div class="cd c5"><div class="lb">최종예상 (G=D+F)</div><div class="vl" id="capG">-</div><div class="sb" id="capGR">예상집행율 -</div></div>
 <div class="cd c6"><div class="lb">공사건수</div><div class="vl" id="capCnt">-</div><div class="sb">&nbsp;</div></div>
+</div>
+<div class="ai-panel" id="capAiPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon">AI</div> AI 예산 분석</div>
+<div class="ai-summary" id="capAiSummary"></div>
+<div class="ai-alerts" id="capAiAlerts"></div>
 </div>
 <div class="stabs">
 <button class="st on" onclick="subTab('cap',this,'capBudget')">예산현황</button>
@@ -644,6 +916,11 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="cd c5"><div class="lb">최종예상 (G=D+F)</div><div class="vl" id="revG">-</div><div class="sb" id="revGR">예상집행율 -</div></div>
 <div class="cd c6"><div class="lb">공사건수</div><div class="vl" id="revCnt">-</div><div class="sb">&nbsp;</div></div>
 </div>
+<div class="ai-panel" id="revAiPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon">AI</div> AI 예산 분석</div>
+<div class="ai-summary" id="revAiSummary"></div>
+<div class="ai-alerts" id="revAiAlerts"></div>
+</div>
 <div class="stabs">
 <button class="st on" onclick="subTab('rev',this,'revBudget')">예산현황</button>
 <button class="st" onclick="subTab('rev',this,'revProj')">공사목록</button>
@@ -676,6 +953,20 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </div>
 </div><!-- /dashboardContent -->
 
+<!-- ═══ 보고서 모달 ═══ -->
+<div class="modal-overlay" id="reportModal">
+<div class="modal-box">
+<div class="modal-head">
+<h2>예산 집행 현황 보고서</h2>
+<div class="modal-actions">
+<button class="btn-copy" onclick="copyReport()">복사</button>
+<button class="btn-close" onclick="closeReport()">닫기</button>
+</div>
+</div>
+<div class="modal-body"><pre id="reportText"></pre></div>
+</div>
+</div>
+
 <script>
 let D=null,CH={};
 
@@ -699,7 +990,7 @@ document.getElementById('fi').addEventListener('change',async e=>{
     document.getElementById('loadingState').style.display='flex';
     document.getElementById('dashboardContent').style.display='none';
     const fd=new FormData();fd.append('file',f);
-    try{const r=await fetch('/api/analyze',{method:'POST',body:fd});const j=await r.json();if(j.error){alert(j.error);document.getElementById('loadingState').style.display='none';document.getElementById('emptyState').style.display='flex';return}D=j;restoreBudgets();document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';document.getElementById('refreshBtn').style.display='inline-block';renderAll()}
+    try{const r=await fetch('/api/analyze',{method:'POST',body:fd});const j=await r.json();if(j.error){alert(j.error);document.getElementById('loadingState').style.display='none';document.getElementById('emptyState').style.display='flex';return}D=j;restoreBudgets();document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';document.getElementById('refreshBtn').style.display='inline-block';document.getElementById('reportBtn').style.display='inline-block';renderAll()}
     catch(err){alert(err.message);document.getElementById('loadingState').style.display='none';document.getElementById('emptyState').style.display='flex'}
 });
 
@@ -752,7 +1043,73 @@ function clr(v){return v<0?'neg':'pos'}
 function niceMax(v){if(v<=0)return 100;const t=v*1.15;if(t<=100)return Math.ceil(t/50)*50;return Math.ceil(t/200)*200}
 function _ch(id,type,data,opts={}){if(CH[id])CH[id].destroy();CH[id]=new Chart(document.getElementById(id),{type,data,options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:11}}}},...opts}})}
 
-function renderAll(){if(!D)return;renderCapital();renderRevenue();renderProjects()}
+function renderAll(){if(!D)return;renderCapital();renderRevenue();renderProjects();renderAI()}
+
+// ═══════════════════════════════════════
+// AI 분석 패널 렌더
+// ═══════════════════════════════════════
+function renderAI(){
+    if(!D||!D.ai_analysis)return;
+    renderAIPanel('cap','capital');
+    renderAIPanel('rev','revenue');
+    document.getElementById('reportBtn').style.display='inline-block';
+}
+
+function renderAIPanel(prefix,dataKey){
+    const ai=D.ai_analysis[dataKey];
+    if(!ai)return;
+    const panel=document.getElementById(prefix+'AiPanel');
+    const summaryEl=document.getElementById(prefix+'AiSummary');
+    const alertsEl=document.getElementById(prefix+'AiAlerts');
+    const pred=ai.predictions;
+    const anomalies=ai.anomalies;
+
+    // Summary stats
+    let html='';
+    html+=`<div class="ai-stat"><div class="ai-label">연간 경과율</div><div class="ai-value">${pred.elapsed_pct}%</div><div class="ai-sub">${pred.month}월 / 12월</div></div>`;
+    html+=`<div class="ai-stat"><div class="ai-label">연말 예측 집행액</div><div class="ai-value">${(pred.total_predicted/1e8).toFixed(1)}억</div><div class="ai-sub">예측 집행율 ${pred.predicted_rate}%</div></div>`;
+    html+=`<div class="ai-stat"><div class="ai-label">예측 신뢰도</div><div class="ai-value">${pred.confidence}</div><div class="ai-sub">${pred.month>=9?'데이터 충분':'추가 데이터 필요'}</div></div>`;
+
+    // Risk items count
+    const riskItems=pred.items.filter(i=>i['위험도']!=='정상');
+    html+=`<div class="ai-stat"><div class="ai-label">위험/주의 항목</div><div class="ai-value" style="color:${riskItems.length>0?'var(--red)':'var(--green)'}">${riskItems.length}건</div><div class="ai-sub">${riskItems.length>0?riskItems.map(i=>i['예산과목'].substring(0,6)).join(', '):'이상 없음'}</div></div>`;
+    summaryEl.innerHTML=html;
+
+    // Alerts
+    let alertHtml='';
+    if(anomalies.length===0){
+        alertHtml='<div class="ai-alert info"><div class="ai-alert-icon">&#10003;</div><div class="ai-alert-text"><div class="ai-alert-title">이상 항목 없음</div><div class="ai-alert-detail">현재 예산 집행이 정상 범위 내에 있습니다.</div></div></div>';
+    }else{
+        const icons={danger:'!',warning:'!',info:'i'};
+        anomalies.slice(0,5).forEach(a=>{
+            alertHtml+=`<div class="ai-alert ${a.level}"><div class="ai-alert-icon">${icons[a.level]||'i'}</div><div class="ai-alert-text"><div class="ai-alert-title">${a.category}: ${a.message}</div><div class="ai-alert-detail">${a.detail}</div></div></div>`;
+        });
+        if(anomalies.length>5){
+            alertHtml+=`<div style="font-size:10px;color:var(--text3);text-align:center;padding:4px">외 ${anomalies.length-5}건</div>`;
+        }
+    }
+    alertsEl.innerHTML=alertHtml;
+    panel.style.display='block';
+}
+
+// ═══════════════════════════════════════
+// 보고서 모달
+// ═══════════════════════════════════════
+function openReport(){
+    if(!D||!D.ai_analysis)return;
+    document.getElementById('reportText').textContent=D.ai_analysis.report;
+    document.getElementById('reportModal').classList.add('on');
+}
+function closeReport(){document.getElementById('reportModal').classList.remove('on')}
+function copyReport(){
+    const text=document.getElementById('reportText').textContent;
+    navigator.clipboard.writeText(text).then(()=>{
+        const btn=document.querySelector('.btn-copy');
+        btn.textContent='복사됨!';
+        setTimeout(()=>{btn.textContent='복사'},1500);
+    });
+}
+document.getElementById('reportModal').addEventListener('click',function(e){if(e.target===this)closeReport()});
 
 // ═══════════════════════════════════════
 // 자본 렌더
