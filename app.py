@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os
+import os, json
 from flask import Flask, request, jsonify, render_template_string
 import pandas as pd
 from datetime import datetime
@@ -9,6 +9,7 @@ app = Flask(__name__)
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 LAST_FILE = None
+BUDGET_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'budgets.json')
 
 # ──────────────────────────────────────────────
 # 1. 배정예산 데이터 (백만원)
@@ -371,6 +372,8 @@ def parse_and_analyze(filepath):
     col_cat_rev = _find_col('손익예산과목') or 10
     col_status = _find_col('공사 상태') or _find_col('공사상태') or 22
     col_start_date = _find_col('착공') or 14
+    col_site_done = _find_col('현장시공') or _find_col('시공완료') or 15
+    col_completion = _find_col('준공검사') or _find_col('준공계') or 16
 
     # 금액 컬럼: 총공사비(자본/수익) 감지
     # 서브헤더에서 '자본'/'수익' 찾기 (총공사비 그룹 하위)
@@ -434,6 +437,8 @@ def parse_and_analyze(filepath):
             '총공사비_설계': _num(row[11]) if 11 < df.shape[1] else 0,
             '도급비_계약': _num(row[13]) if 13 < df.shape[1] else 0,
             '착공일': _date_str(row[col_start_date]) if col_start_date < df.shape[1] else '',
+            '현장시공완료일': _date_str(row[col_site_done]) if col_site_done < df.shape[1] else '',
+            '준공일': _date_str(row[col_completion]) if col_completion < df.shape[1] else '',
             '공사상태': status,
             '설계_자본': cost_cap,
             '기성_자본': paid_cap,
@@ -744,6 +749,9 @@ tbody tr:nth-child(even){background:#FDFDFE}
 tfoot td{padding:8px 3px;font-weight:800;border-top:2px solid var(--navy2);text-align:right;background:#F0F4FF;color:var(--navy2)}
 tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 
+/* ── Project table ── */
+#tCapProj td:nth-child(n+9),#tCapProj th:nth-child(n+9),#tRevProj td:nth-child(n+9),#tRevProj th:nth-child(n+9){font-size:12px}
+
 /* ── Progress bar ── */
 .br{display:inline-block;width:52px;height:5px;background:#E2E8F0;border-radius:3px;overflow:hidden;vertical-align:middle;margin-right:3px}
 .br .f{display:block;height:100%;border-radius:3px}
@@ -912,7 +920,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </div>
 <div class="sp2 on" id="capBudgetP">
 <div class="cbox"><h3>자본 예산 집행 현황 (백만원)</h3><canvas id="chCapBar"></canvas></div>
-<div class="tb"><h3>자본 예산현황 (단위: 원, 배정예산 직접 입력)</h3><div class="sc">
+<div class="tb"><h3 style="display:flex;justify-content:space-between;align-items:center">자본 예산현황<span style="font-size:11px;font-weight:400;color:var(--text3)">(단위: 원, 배정예산 직접 입력)</span></h3><div class="sc">
 <table id="tCapMain">
 <thead><tr>
 <th>자금운용<br>사업코드</th><th>사업명</th><th>배정예산<br>(A)</th>
@@ -927,12 +935,15 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <td id="capTotF">-</td><td id="capTotG">-</td><td id="capTotGA">-</td><td id="capTotGR">-</td><td id="capTotN">-</td>
 </tr></tfoot>
 </table></div>
+<div style="display:flex;gap:8px;margin-top:10px">
 <button class="add-row-btn" onclick="addRow('cap')">+ 항목 추가</button>
+<button class="add-row-btn" style="border-color:var(--navy2);background:var(--navy2);color:#fff" onclick="saveBudgets('cap')">배정예산 저장</button>
+</div>
 </div>
 </div>
 <div class="sp2" id="capProjP">
 <div class="sf"><input type="text" id="capSrch" placeholder="공사번호/업체명/과목 검색..."><select id="capFilt"><option value="">전체</option><option value="공사완료">완료</option><option value="공사중">진행</option><option value="공사중지">중지</option></select></div>
-<div class="tb"><h3>공사목록 (자본)</h3><div class="sc"><table id="tCapProj"><thead><tr><th>No</th><th>공사번호</th><th>자본예산과목</th><th>공사업체</th><th>상태</th><th>착공일</th><th>설계(자본)</th><th>기성(자본)</th><th>예정(자본)</th><th>기성율</th></tr></thead><tbody></tbody></table></div></div>
+<div class="tb"><h3>공사목록 (자본)</h3><div class="sc"><table id="tCapProj"><thead><tr><th>No</th><th>공사번호</th><th>자본예산과목</th><th>공사업체</th><th>공사상태</th><th>착공일</th><th>현장시공<br>완료일</th><th>준공일</th><th>설계(자본)</th><th>기성(자본)</th><th>예정(자본)</th><th>기성율</th></tr></thead><tbody></tbody></table></div></div>
 </div>
 </div>
 
@@ -957,7 +968,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </div>
 <div class="sp2 on" id="revBudgetP">
 <div class="cbox"><h3>손익 예산 집행 현황 (백만원)</h3><canvas id="chRevBar"></canvas></div>
-<div class="tb"><h3>손익 예산현황 (단위: 원, 배정예산 직접 입력)</h3><div class="sc">
+<div class="tb"><h3 style="display:flex;justify-content:space-between;align-items:center">손익 예산현황<span style="font-size:11px;font-weight:400;color:var(--text3)">(단위: 원, 배정예산 직접 입력)</span></h3><div class="sc">
 <table id="tRevMain">
 <thead><tr>
 <th>자금운용<br>사업코드</th><th>사업명</th><th>배정예산<br>(A)</th>
@@ -972,12 +983,15 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <td id="revTotF">-</td><td id="revTotG">-</td><td id="revTotGA">-</td><td id="revTotGR">-</td><td id="revTotN">-</td>
 </tr></tfoot>
 </table></div>
+<div style="display:flex;gap:8px;margin-top:10px">
 <button class="add-row-btn" onclick="addRow('rev')">+ 항목 추가</button>
+<button class="add-row-btn" style="border-color:var(--navy2);background:var(--navy2);color:#fff" onclick="saveBudgets('rev')">배정예산 저장</button>
+</div>
 </div>
 </div>
 <div class="sp2" id="revProjP">
 <div class="sf"><input type="text" id="revSrch" placeholder="공사번호/업체명/과목 검색..."><select id="revFilt"><option value="">전체</option><option value="공사완료">완료</option><option value="공사중">진행</option><option value="공사중지">중지</option></select></div>
-<div class="tb"><h3>공사목록 (손익)</h3><div class="sc"><table id="tRevProj"><thead><tr><th>No</th><th>공사번호</th><th>손익예산과목</th><th>공사업체</th><th>상태</th><th>착공일</th><th>설계(손익)</th><th>기성(손익)</th><th>예정(손익)</th><th>기성율</th></tr></thead><tbody></tbody></table></div></div>
+<div class="tb"><h3>공사목록 (손익)</h3><div class="sc"><table id="tRevProj"><thead><tr><th>No</th><th>공사번호</th><th>손익예산과목</th><th>공사업체</th><th>공사상태</th><th>착공일</th><th>현장시공<br>완료일</th><th>준공일</th><th>설계(손익)</th><th>기성(손익)</th><th>예정(손익)</th><th>기성율</th></tr></thead><tbody></tbody></table></div></div>
 </div>
 </div>
 </div>
@@ -1046,7 +1060,7 @@ document.getElementById('fi').addEventListener('change',async e=>{
                 }
             });
         });
-        document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';document.getElementById('refreshBtn').style.display='inline-block';document.getElementById('reportBtn').style.display='inline-block';renderAll()}
+        document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';document.getElementById('refreshBtn').style.display='inline-block';document.getElementById('reportBtn').style.display='inline-block';renderAll();updateSummaryCards('cap');updateSummaryCards('rev')}
     catch(err){alert(err.message);document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block'}
 });
 
@@ -1079,7 +1093,7 @@ async function doRefresh(){
                 }
             });
         });
-        document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';renderAll()}
+        document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';renderAll();updateSummaryCards('cap');updateSummaryCards('rev')}
     catch(e){document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block'}
 }
 
@@ -1245,6 +1259,22 @@ function copyReport(){
 document.getElementById('reportModal').addEventListener('click',function(e){if(e.target===this)closeReport()});
 
 // ═══════════════════════════════════════
+// 차트 렌더 (분리)
+// ═══════════════════════════════════════
+function _renderBarChart(chartId,comp){
+    const lb=[],aV=[],dV=[],gV=[];
+    comp.forEach(r=>{if(!r['배정예산_백만']&&!r['집행실적']&&!r['예상집행'])return;lb.push(sn(r['예산과목'],7));aV.push(r['배정예산_백만']);dV.push(Math.round(r['집행실적']/1e6));gV.push(Math.round(r['예상집행']/1e6))});
+    const mx=aV.length?Math.max(...aV,...dV,...gV):0;const yMax=niceMax(mx);
+    _ch(chartId,'bar',{labels:lb,datasets:[
+        {label:'배정예산(A)',data:aV,backgroundColor:'rgba(59,130,246,.7)',borderColor:'rgba(59,130,246,1)',borderWidth:1,borderRadius:3},
+        {label:'집행실적(D)',data:dV,backgroundColor:'rgba(239,68,68,.65)',borderColor:'rgba(239,68,68,1)',borderWidth:1,borderRadius:3},
+        {label:'최종예상(G)',data:gV,backgroundColor:'rgba(251,191,36,.6)',borderColor:'rgba(245,158,11,1)',borderWidth:1,borderRadius:3}
+    ]},{scales:{y:{beginAtZero:true,max:yMax,afterBuildTicks(axis){const t=[0,50,100];for(let v=200;v<=axis.max;v+=200)t.push(v);axis.ticks=t.map(v=>({value:v}))},ticks:{font:{size:10}},title:{display:true,text:'백만원'}}}});
+}
+function renderCapitalChart(){_renderBarChart('chCapBar',D.capital.budget_comparison)}
+function renderRevenueChart(){_renderBarChart('chRevBar',D.revenue.budget_comparison)}
+
+// ═══════════════════════════════════════
 // 자본 렌더
 // ═══════════════════════════════════════
 function renderCapital(){
@@ -1257,22 +1287,20 @@ function renderCapital(){
     document.getElementById('capG').textContent=fm(s['예상집행']);
     document.getElementById('capGR').textContent='예상집행율 '+fp(s['예상집행율']);
     document.getElementById('capCnt').textContent=s['공사건수']+'건';
+    renderCapitalChart();
 
     const comp=D.capital.budget_comparison;
-    const lb=[],aV=[],dV=[],gV=[];
-    comp.forEach(r=>{if(!r['배정예산_백만']&&!r['집행실적']&&!r['예상집행'])return;lb.push(sn(r['예산과목'],7));aV.push(r['배정예산_백만']);dV.push(Math.round(r['집행실적']/1e6));gV.push(Math.round(r['예상집행']/1e6))});
-    const capMax=Math.max(...aV,...dV,...gV);const capYMax=niceMax(capMax);
-    _ch('chCapBar','bar',{labels:lb,datasets:[
-        {label:'배정예산(A)',data:aV,backgroundColor:'rgba(59,130,246,.7)',borderColor:'rgba(59,130,246,1)',borderWidth:1,borderRadius:3},
-        {label:'집행실적(D)',data:dV,backgroundColor:'rgba(239,68,68,.65)',borderColor:'rgba(239,68,68,1)',borderWidth:1,borderRadius:3},
-        {label:'최종예상(G)',data:gV,backgroundColor:'rgba(251,191,36,.6)',borderColor:'rgba(245,158,11,1)',borderWidth:1,borderRadius:3}
-    ]},{scales:{y:{beginAtZero:true,max:capYMax,afterBuildTicks(axis){const t=[0,50,100];for(let v=200;v<=axis.max;v+=200)t.push(v);axis.ticks=t.map(v=>({value:v}))},ticks:{font:{size:10}},title:{display:true,text:'백만원'}}}});
-
     const tb=document.querySelector('#tCapMain tbody');tb.innerHTML='';
     comp.forEach((r,i)=>{
         const a=r['배정예산'],b=r['소비금액'],c=r['약정금액'],d=r['집행실적'],e=r['잔액'],f=r['진행중공사비'],g=r['예상집행'],ga=r['예상잔액'],dr=r['집행율'],gr=r['예상집행율'];
         const tr=document.createElement('tr');
-        tr.innerHTML=`<td>${r['사업코드']}</td><td>${r['예산과목']}</td>
+        const codeCell=r._custom
+            ?`<td><input class="inp-code" type="text" value="${r['사업코드']}" placeholder="사업코드" onchange="D.capital.budget_comparison[${i}]['사업코드']=this.value"></td>`
+            :`<td>${r['사업코드']}</td>`;
+        const nameCell=r._custom
+            ?`<td><input class="inp-code" type="text" value="${r['예산과목']}" placeholder="사업명" onchange="D.capital.budget_comparison[${i}]['예산과목']=this.value"></td>`
+            :`<td>${r['예산과목']}</td>`;
+        tr.innerHTML=codeCell+nameCell+`
             <td><input class="inp-budget" type="text" data-section="cap" data-idx="${i}" value="${fw(a)}" onchange="recalcBudget(this)"></td>
             <td>${fw(b)}</td><td>${fw(c)}</td><td>${fw(d)}</td>
             <td class="${clr(e)}">${fw(e)}</td><td>${br(dr)}</td>
@@ -1295,22 +1323,20 @@ function renderRevenue(){
     document.getElementById('revG').textContent=fm(s['예상집행']);
     document.getElementById('revGR').textContent='예상집행율 '+fp(s['예상집행율']);
     document.getElementById('revCnt').textContent=s['공사건수']+'건';
+    renderRevenueChart();
 
     const comp=D.revenue.budget_comparison;
-    const lb=[],aV=[],dV=[],gV=[];
-    comp.forEach(r=>{if(!r['배정예산_백만']&&!r['집행실적']&&!r['예상집행'])return;lb.push(sn(r['예산과목'],7));aV.push(r['배정예산_백만']);dV.push(Math.round(r['집행실적']/1e6));gV.push(Math.round(r['예상집행']/1e6))});
-    const revMax=Math.max(...aV,...dV,...gV);const revYMax=niceMax(revMax);
-    _ch('chRevBar','bar',{labels:lb,datasets:[
-        {label:'배정예산(A)',data:aV,backgroundColor:'rgba(59,130,246,.7)',borderColor:'rgba(59,130,246,1)',borderWidth:1,borderRadius:3},
-        {label:'집행실적(D)',data:dV,backgroundColor:'rgba(239,68,68,.65)',borderColor:'rgba(239,68,68,1)',borderWidth:1,borderRadius:3},
-        {label:'최종예상(G)',data:gV,backgroundColor:'rgba(251,191,36,.6)',borderColor:'rgba(245,158,11,1)',borderWidth:1,borderRadius:3}
-    ]},{scales:{y:{beginAtZero:true,max:revYMax,afterBuildTicks(axis){const t=[0,50,100];for(let v=200;v<=axis.max;v+=200)t.push(v);axis.ticks=t.map(v=>({value:v}))},ticks:{font:{size:10}},title:{display:true,text:'백만원'}}}});
-
     const tb=document.querySelector('#tRevMain tbody');tb.innerHTML='';
     comp.forEach((r,i)=>{
         const a=r['배정예산'],b=r['소비금액'],c=r['약정금액'],d=r['집행실적'],e=r['잔액'],f=r['진행중공사비'],g=r['예상집행'],ga=r['예상잔액'],dr=r['집행율'],gr=r['예상집행율'];
         const tr=document.createElement('tr');
-        tr.innerHTML=`<td>${r['사업코드']}</td><td>${r['예산과목']}</td>
+        const codeCell=r._custom
+            ?`<td><input class="inp-code" type="text" value="${r['사업코드']}" placeholder="사업코드" onchange="D.revenue.budget_comparison[${i}]['사업코드']=this.value"></td>`
+            :`<td>${r['사업코드']}</td>`;
+        const nameCell=r._custom
+            ?`<td><input class="inp-code" type="text" value="${r['예산과목']}" placeholder="사업명" onchange="D.revenue.budget_comparison[${i}]['예산과목']=this.value"></td>`
+            :`<td>${r['예산과목']}</td>`;
+        tr.innerHTML=codeCell+nameCell+`
             <td><input class="inp-budget" type="text" data-section="rev" data-idx="${i}" value="${fw(a)}" onchange="recalcBudget(this)"></td>
             <td>${fw(b)}</td><td>${fw(c)}</td><td>${fw(d)}</td>
             <td class="${clr(e)}">${fw(e)}</td><td>${br(dr)}</td>
@@ -1318,6 +1344,59 @@ function renderRevenue(){
         tb.appendChild(tr);
     });
     updateTotals('rev');
+}
+
+// ═══════════════════════════════════════
+// 배정예산 저장 버튼
+// ═══════════════════════════════════════
+function saveBudgets(sec){
+    const dataKey=sec==='cap'?'capital':'revenue';
+    const tId=sec==='cap'?'tCapMain':'tRevMain';
+    // 테이블의 모든 배정예산 input 읽기
+    document.querySelectorAll('#'+tId+' .inp-budget').forEach(inp=>{
+        const idx=parseInt(inp.dataset.idx);
+        const val=parseFloat(inp.value.replace(/,/g,''))||0;
+        const r=D[dataKey].budget_comparison[idx];
+        if(!r)return;
+        r['배정예산']=val;r['배정예산_백만']=val/1e6;
+        const d=r['집행실적'],g=r['예상집행'];
+        r['잔액']=val-d;r['예상잔액']=val-g;
+        r['집행율']=val?+(d/val*100).toFixed(1):0;
+        r['예상집행율']=val?+(g/val*100).toFixed(1):0;
+        r['상태']=r['예상집행율']>100?'초과':r['예상집행율']>70?'양호':'미달';
+        inp.value=fw(val);
+        // 행 셀 업데이트
+        const tr=inp.closest('tr');const cells=tr.querySelectorAll('td');
+        cells[6].className=clr(r['잔액']);cells[6].textContent=fw(r['잔액']);
+        cells[7].innerHTML=br(r['집행율']);
+        cells[10].className=clr(r['예상잔액']);cells[10].textContent=fw(r['예상잔액']);
+        cells[11].innerHTML=br(r['예상집행율']);
+    });
+    updateTotals(sec);
+    updateSummaryCards(sec);
+    if(sec==='cap'){renderEarlyExec();renderCapitalChart()}
+    else{renderRevenueChart()}
+    // 서버에 저장 (기본항목 금액 + 사용자추가 항목 전체)
+    const saveData={capital:{budgets:{},custom_items:[]},revenue:{budgets:{},custom_items:[]}};
+    ['capital','revenue'].forEach(k=>{
+        (D[k].budget_comparison||[]).forEach(r=>{
+            if(r._custom){
+                if(r['예산과목']) saveData[k].custom_items.push({사업코드:r['사업코드'],예산과목:r['예산과목'],배정예산:r['배정예산']||0});
+            } else if(r['배정예산']>0){
+                saveData[k].budgets[r['예산과목']]=r['배정예산'];
+            }
+        });
+    });
+    const btn=event.target;
+    fetch('/api/save-budgets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(saveData)})
+    .then(r=>r.json()).then(j=>{
+        if(j.ok){btn.textContent='저장됨!';btn.style.background='var(--green)';btn.style.borderColor='var(--green)';}
+        else{btn.textContent='저장실패';btn.style.background='#e74c3c';btn.style.borderColor='#e74c3c';}
+        setTimeout(()=>{btn.textContent='배정예산 저장';btn.style.background='var(--navy2)';btn.style.borderColor='var(--navy2)'},1500);
+    }).catch(()=>{
+        btn.textContent='저장실패';btn.style.background='#e74c3c';btn.style.borderColor='#e74c3c';
+        setTimeout(()=>{btn.textContent='배정예산 저장';btn.style.background='var(--navy2)';btn.style.borderColor='var(--navy2)'},1500);
+    });
 }
 
 // ═══════════════════════════════════════
@@ -1408,7 +1487,7 @@ function addRow(sec){
     const comp=D[dataKey].budget_comparison;
     const tId=sec==='cap'?'tCapMain':'tRevMain';
     const idx=comp.length;
-    const newItem={'사업코드':'','예산과목':'','배정예산_백만':0,'배정예산':0,'소비금액':0,'약정금액':0,'집행실적':0,'잔액':0,'집행율':0,'진행중공사비':0,'예상집행':0,'예상잔액':0,'예상집행율':0,'건수':0,'상태':'미달'};
+    const newItem={'사업코드':'','예산과목':'','배정예산_백만':0,'배정예산':0,'소비금액':0,'약정금액':0,'집행실적':0,'잔액':0,'집행율':0,'진행중공사비':0,'예상집행':0,'예상잔액':0,'예상집행율':0,'건수':0,'상태':'미달','_custom':true};
     comp.push(newItem);
     const tb=document.querySelector('#'+tId+' tbody');
     const tr=document.createElement('tr');
@@ -1442,7 +1521,7 @@ function setupPT(rows,tId,srchId,filtId,catKey,dK,pK,eK){
         }).forEach((r,idx)=>{
             const rate=r[dK]?(r[pK]/r[dK]*100):0;
             const tr=document.createElement('tr');
-            tr.innerHTML=`<td>${idx+1}</td><td>${r['공사번호']}</td><td>${r[catKey]}</td><td>${r['공사업체']}</td><td>${stBg(r['공사상태'])}</td><td>${r['착공일']}</td><td>${fw(r[dK])}</td><td>${fw(r[pK])}</td><td>${fw(r[eK])}</td><td>${br(rate)}</td>`;
+            tr.innerHTML=`<td>${idx+1}</td><td>${r['공사번호']}</td><td>${r[catKey]}</td><td>${r['공사업체']}</td><td>${stBg(r['공사상태'])}</td><td>${r['착공일']}</td><td>${r['현장시공완료일']||''}</td><td>${r['준공일']||''}</td><td>${fw(r[dK])}</td><td>${fw(r[pK])}</td><td>${fw(r[eK])}</td><td>${br(rate)}</td>`;
             tb.appendChild(tr);
         });
     }
@@ -1470,33 +1549,106 @@ def index():
     return render_template_string(HTML_TEMPLATE)
 
 
+def _load_saved_budgets():
+    """budgets.json에서 저장된 배정예산 로드"""
+    if os.path.exists(BUDGET_FILE):
+        try:
+            with open(BUDGET_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _apply_saved_budgets(comp_list, section_key, saved):
+    """comparison 리스트에 저장된 배정예산 + 사용자 추가 항목 적용"""
+    sec_data = saved.get(section_key, {})
+    # 기본항목 배정예산 복원
+    bmap = sec_data.get('budgets', {}) if isinstance(sec_data, dict) else {}
+    # 구버전 호환 (flat dict)
+    if isinstance(sec_data, dict) and 'budgets' not in sec_data and 'custom_items' not in sec_data:
+        bmap = sec_data
+    for r in comp_list:
+        name = r['예산과목']
+        if name in bmap and bmap[name] > 0:
+            a = bmap[name]
+            r['배정예산'] = a
+            r['배정예산_백만'] = a / 1e6
+            d, g = r['집행실적'], r['예상집행']
+            r['잔액'] = a - d
+            r['예상잔액'] = a - g
+            r['집행율'] = round(d / a * 100, 1) if a else 0
+            r['예상집행율'] = round(g / a * 100, 1) if a else 0
+            r['상태'] = '초과' if r['예상집행율'] > 100 else ('양호' if r['예상집행율'] > 70 else '미달')
+    # 사용자 추가 항목 복원
+    custom_items = sec_data.get('custom_items', []) if isinstance(sec_data, dict) else []
+    existing_names = {r['예산과목'] for r in comp_list}
+    for ci in custom_items:
+        if ci.get('예산과목') and ci['예산과목'] not in existing_names:
+            a = ci.get('배정예산', 0)
+            comp_list.append({
+                '사업코드': ci.get('사업코드', ''), '예산과목': ci['예산과목'],
+                '배정예산_백만': a / 1e6, '배정예산': a,
+                '소비금액': 0, '약정금액': 0,
+                '집행실적': 0, '잔액': a,
+                '집행율': 0, '진행중공사비': 0, '예상집행': 0,
+                '예상잔액': a, '예상집행율': 0,
+                '건수': 0, '상태': '미달', '_custom': True,
+            })
+
+
 @app.route('/api/init')
 def api_init():
-    """배정예산 입력용 빈 데이터 구조 반환"""
+    """배정예산 입력용 빈 데이터 구조 반환 (저장된 배정예산 복원)"""
     def _empty_comp(budget_dict):
         return [{
             '사업코드': bcode, '예산과목': bname,
-            '배정예산_백만': bval_mil, '배정예산': bval_mil * 1_000_000,
+            '배정예산_백만': 0, '배정예산': 0,
             '소비금액': 0, '약정금액': 0,
-            '집행실적': 0, '잔액': bval_mil * 1_000_000,
+            '집행실적': 0, '잔액': 0,
             '집행율': 0, '진행중공사비': 0, '예상집행': 0,
-            '예상잔액': bval_mil * 1_000_000, '예상집행율': 0,
+            '예상잔액': 0, '예상집행율': 0,
             '건수': 0, '상태': '미달',
         } for bname, (bcode, bval_mil) in budget_dict.items()]
 
-    def _empty_summary():
-        return {'배정예산': 0, '소비금액': 0, '약정금액': 0,
-                '집행실적': 0, '잔액': 0, '집행율': 0,
-                '진행중공사비': 0, '예상집행': 0, '예상잔액': 0,
-                '예상집행율': 0, '공사건수': 0, '초과항목': 0}
+    def _summary(comp):
+        ta = sum(r['배정예산'] for r in comp)
+        td = sum(r['집행실적'] for r in comp)
+        tg = sum(r['예상집행'] for r in comp)
+        return {'배정예산': ta, '소비금액': 0, '약정금액': 0,
+                '집행실적': td, '잔액': ta - td,
+                '집행율': round(td / ta * 100, 1) if ta else 0,
+                '진행중공사비': 0, '예상집행': tg, '예상잔액': ta - tg,
+                '예상집행율': round(tg / ta * 100, 1) if ta else 0,
+                '공사건수': 0, '초과항목': 0}
+
+    cap_comp = _empty_comp(BUDGET_CAPITAL)
+    rev_comp = _empty_comp(BUDGET_REVENUE)
+
+    # 저장된 배정예산 복원
+    saved = _load_saved_budgets()
+    _apply_saved_budgets(cap_comp, 'capital', saved)
+    _apply_saved_budgets(rev_comp, 'revenue', saved)
 
     return jsonify({
-        'capital': {'summary': _empty_summary(), 'budget_comparison': _empty_comp(BUDGET_CAPITAL),
+        'capital': {'summary': _summary(cap_comp), 'budget_comparison': cap_comp,
                     'category': [], 'status': {}, 'budget_sheets': {}},
-        'revenue': {'summary': _empty_summary(), 'budget_comparison': _empty_comp(BUDGET_REVENUE),
+        'revenue': {'summary': _summary(rev_comp), 'budget_comparison': rev_comp,
                     'category': [], 'status': {}, 'budget_sheets': {}},
         'projects': [],
     })
+
+
+@app.route('/api/save-budgets', methods=['POST'])
+def api_save_budgets():
+    """배정예산을 서버에 저장"""
+    data = request.get_json()
+    try:
+        with open(BUDGET_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/analyze', methods=['POST'])
@@ -1511,7 +1663,11 @@ def api_analyze():
     f.save(filepath)
     LAST_FILE = filepath
     try:
-        return jsonify(parse_and_analyze(filepath))
+        result = parse_and_analyze(filepath)
+        saved = _load_saved_budgets()
+        _apply_saved_budgets(result['capital']['budget_comparison'], 'capital', saved)
+        _apply_saved_budgets(result['revenue']['budget_comparison'], 'revenue', saved)
+        return jsonify(result)
     except Exception as e:
         return jsonify({'error': f'분석 오류: {str(e)}'}), 500
 
@@ -1521,7 +1677,11 @@ def api_refresh():
     if not LAST_FILE or not os.path.exists(LAST_FILE):
         return jsonify({'error': '업로드된 파일이 없습니다.'}), 404
     try:
-        return jsonify(parse_and_analyze(LAST_FILE))
+        result = parse_and_analyze(LAST_FILE)
+        saved = _load_saved_budgets()
+        _apply_saved_budgets(result['capital']['budget_comparison'], 'capital', saved)
+        _apply_saved_budgets(result['revenue']['budget_comparison'], 'revenue', saved)
+        return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
