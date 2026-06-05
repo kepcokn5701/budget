@@ -819,6 +819,29 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 .modal-body{padding:20px;overflow-y:auto;flex:1}
 .modal-body pre{white-space:pre-wrap;word-break:break-all;font-family:'Malgun Gothic','Apple SD Gothic Neo',monospace;font-size:12px;line-height:1.8;color:var(--text)}
 
+/* ── Early Execution Target ── */
+.early-exec{background:linear-gradient(135deg,#FFF7ED 0%,#FEF3C7 100%);border:1px solid #FDE68A;border-radius:10px;padding:16px 20px;margin:16px 0;position:relative;overflow:hidden}
+.early-exec::before{content:'';position:absolute;top:0;left:0;width:4px;height:100%;background:linear-gradient(180deg,var(--orange),var(--amber))}
+.early-exec .ee-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px}
+.early-exec .ee-title{font-size:13px;font-weight:700;color:#92400E;display:flex;align-items:center;gap:6px}
+.early-exec .ee-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.early-exec .ee-controls label{font-size:11px;font-weight:600;color:#92400E}
+.early-exec .ee-controls input,.early-exec .ee-controls select{padding:4px 8px;border:1px solid #FDE68A;border-radius:5px;font-size:12px;font-weight:700;width:60px;text-align:center;background:#fff}
+.early-exec .ee-controls input:focus,.early-exec .ee-controls select:focus{outline:none;border-color:var(--orange);box-shadow:0 0 0 2px rgba(232,115,27,.15)}
+.ee-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
+.ee-item{background:#fff;border-radius:8px;padding:10px 12px;border:1px solid #FDE68A;display:flex;flex-direction:column;gap:4px}
+.ee-item .ee-name{font-size:10px;font-weight:700;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ee-item .ee-bar{height:8px;background:#F3F4F6;border-radius:4px;overflow:hidden;position:relative}
+.ee-item .ee-bar .ee-fill{height:100%;border-radius:4px;transition:width .3s}
+.ee-item .ee-bar .ee-target-line{position:absolute;top:-2px;height:12px;width:2px;background:#991B1B}
+.ee-item .ee-nums{display:flex;justify-content:space-between;font-size:10px;color:var(--text3)}
+.ee-item .ee-nums .ee-achieved{font-weight:700}
+.ee-item.ee-over .ee-fill{background:var(--green)}.ee-item.ee-close .ee-fill{background:var(--amber)}.ee-item.ee-behind .ee-fill{background:var(--red)}
+.ee-total{background:#fff;border-radius:8px;padding:12px 16px;border:2px solid var(--orange);margin-top:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.ee-total .ee-total-label{font-size:12px;font-weight:700;color:#92400E}
+.ee-total .ee-total-value{font-size:18px;font-weight:800;color:var(--text)}
+.ee-total .ee-total-sub{font-size:10px;color:var(--text3)}
+
 /* ── Responsive ── */
 @media(max-width:1200px){.cards{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}}
@@ -839,14 +862,6 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </header>
 <div class="wrap">
 
-<!-- ═══ 빈 상태 안내 ═══ -->
-<div class="empty-state" id="emptyState">
-<div class="es-icon">&#128203;</div>
-<div class="es-title">공사관리대장 파일을 업로드하세요</div>
-<div class="es-desc">엑셀(.xlsx) 파일을 업로드하면<br>예산 집행현황을 분석합니다.</div>
-<button class="es-btn" onclick="document.getElementById('fi').click()">파일 선택</button>
-</div>
-
 <!-- ═══ 분석중 ═══ -->
 <div class="empty-state" id="loadingState" style="display:none">
 <div class="sp on" style="width:40px;height:40px;border-width:4px"></div>
@@ -855,7 +870,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </div>
 
 <!-- ═══ 대시보드 본문 ═══ -->
-<div id="dashboardContent" style="display:none">
+<div id="dashboardContent">
 <div class="main-tabs">
 <button class="mt cap" id="mtCap" onclick="switchMain('cap')">자본</button>
 <button class="mt rev off" id="mtRev" onclick="switchMain('rev')">손익</button>
@@ -870,6 +885,21 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="cd c3"><div class="lb">진행중공사비 (F)</div><div class="vl" id="capF">-</div><div class="sb">미준공 금액</div></div>
 <div class="cd c5"><div class="lb">최종예상 (G=D+F)</div><div class="vl" id="capG">-</div><div class="sb" id="capGR">예상집행율 -</div></div>
 <div class="cd c6"><div class="lb">공사건수</div><div class="vl" id="capCnt">-</div><div class="sb">&nbsp;</div></div>
+</div>
+<div class="early-exec" id="capEarlyExec">
+<div class="ee-header">
+<div class="ee-title">&#9889; 투자비 조기집행 목표</div>
+<div class="ee-controls">
+<label>목표</label><input type="number" id="capTargetPct" value="60" min="0" max="100" onchange="renderEarlyExec()">
+<label>%</label>
+<label style="margin-left:8px">기한</label>
+<select id="capTargetMonth" onchange="renderEarlyExec()">
+<option value="3">3월</option><option value="4">4월</option><option value="5">5월</option>
+<option value="6" selected>6월</option><option value="7">7월</option><option value="8">8월</option><option value="9">9월</option>
+</select>
+</div>
+</div>
+<div id="capEarlyBody"></div>
 </div>
 <div class="ai-panel" id="capAiPanel" style="display:none">
 <div class="ai-header"><div class="ai-icon">AI</div> AI 예산 분석</div>
@@ -986,50 +1016,71 @@ function subTab(prefix,btn,pane){
 document.getElementById('fi').addEventListener('change',async e=>{
     const f=e.target.files[0];if(!f)return;
     document.getElementById('fn').textContent=f.name;
-    document.getElementById('emptyState').style.display='none';
     document.getElementById('loadingState').style.display='flex';
     document.getElementById('dashboardContent').style.display='none';
+    // 기존 배정예산 보존
+    const savedBudgets={};
+    if(D){
+        ['capital','revenue'].forEach(dk=>{
+            savedBudgets[dk]={};
+            D[dk].budget_comparison.forEach(r=>{
+                if(r['배정예산']>0) savedBudgets[dk][r['예산과목']]=r['배정예산'];
+            });
+        });
+    }
     const fd=new FormData();fd.append('file',f);
-    try{const r=await fetch('/api/analyze',{method:'POST',body:fd});const j=await r.json();if(j.error){alert(j.error);document.getElementById('loadingState').style.display='none';document.getElementById('emptyState').style.display='flex';return}D=j;restoreBudgets();document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';document.getElementById('refreshBtn').style.display='inline-block';document.getElementById('reportBtn').style.display='inline-block';renderAll()}
-    catch(err){alert(err.message);document.getElementById('loadingState').style.display='none';document.getElementById('emptyState').style.display='flex'}
+    try{const r=await fetch('/api/analyze',{method:'POST',body:fd});const j=await r.json();if(j.error){alert(j.error);document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';return}D=j;
+        // 배정예산 복원
+        ['capital','revenue'].forEach(dk=>{
+            const map=savedBudgets[dk]||{};
+            D[dk].budget_comparison.forEach(r=>{
+                const name=r['예산과목'];
+                if(name in map){
+                    const a=map[name];
+                    r['배정예산']=a;r['배정예산_백만']=a/1e6;
+                    const d=r['집행실적'],g=r['예상집행'];
+                    r['잔액']=a-d;r['예상잔액']=a-g;
+                    r['집행율']=a?+(d/a*100).toFixed(1):0;
+                    r['예상집행율']=a?+(g/a*100).toFixed(1):0;
+                    r['상태']=r['예상집행율']>100?'초과':r['예상집행율']>70?'양호':'미달';
+                }
+            });
+        });
+        document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';document.getElementById('refreshBtn').style.display='inline-block';document.getElementById('reportBtn').style.display='inline-block';renderAll()}
+    catch(err){alert(err.message);document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block'}
 });
 
 async function doRefresh(){
     document.getElementById('loadingState').style.display='flex';
     document.getElementById('dashboardContent').style.display='none';
-    try{const r=await fetch('/api/refresh');const j=await r.json();if(j.error){alert(j.error);document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';return}D=j;restoreBudgets();document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';renderAll()}
-    catch(e){document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block'}
-}
-
-// ═══ 배정예산 localStorage 저장/복원 ═══
-function saveBudgets(){
-    if(!D)return;
-    const cap={},rev={};
-    D.capital.budget_comparison.forEach(r=>{cap[r['예산과목']]=r['배정예산']});
-    D.revenue.budget_comparison.forEach(r=>{rev[r['예산과목']]=r['배정예산']});
-    localStorage.setItem('budget_cap',JSON.stringify(cap));
-    localStorage.setItem('budget_rev',JSON.stringify(rev));
-}
-function restoreBudgets(){
-    if(!D)return;
-    ['capital','revenue'].forEach(dk=>{
-        const key=dk==='capital'?'budget_cap':'budget_rev';
-        const saved=localStorage.getItem(key);
-        if(!saved)return;
-        const map=JSON.parse(saved);
-        D[dk].budget_comparison.forEach(r=>{
-            const name=r['예산과목'];
-            if(name in map && map[name]>0){
-                const a=map[name];
-                r['배정예산']=a;r['배정예산_백만']=a/1e6;
-                const d=r['집행실적'],g=r['예상집행'];
-                r['잔액']=a-d;r['예상잔액']=a-g;
-                r['집행율']=a?+(d/a*100).toFixed(1):0;
-                r['예상집행율']=a?+(g/a*100).toFixed(1):0;
-                r['상태']=r['예상집행율']>100?'초과':r['예상집행율']>70?'양호':'미달';
-            }
+    // 배정예산 보존
+    const savedBudgets={};
+    if(D){
+        ['capital','revenue'].forEach(dk=>{
+            savedBudgets[dk]={};
+            D[dk].budget_comparison.forEach(r=>{
+                if(r['배정예산']>0) savedBudgets[dk][r['예산과목']]=r['배정예산'];
+            });
         });
-    });
+    }
+    try{const r=await fetch('/api/refresh');const j=await r.json();if(j.error){alert(j.error);document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';return}D=j;
+        ['capital','revenue'].forEach(dk=>{
+            const map=savedBudgets[dk]||{};
+            D[dk].budget_comparison.forEach(r=>{
+                const name=r['예산과목'];
+                if(name in map){
+                    const a=map[name];
+                    r['배정예산']=a;r['배정예산_백만']=a/1e6;
+                    const d=r['집행실적'],g=r['예상집행'];
+                    r['잔액']=a-d;r['예상잔액']=a-g;
+                    r['집행율']=a?+(d/a*100).toFixed(1):0;
+                    r['예상집행율']=a?+(g/a*100).toFixed(1):0;
+                    r['상태']=r['예상집행율']>100?'초과':r['예상집행율']>70?'양호':'미달';
+                }
+            });
+        });
+        document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';renderAll()}
+    catch(e){document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block'}
 }
 
 const fm=v=>(v/1e6).toLocaleString('ko-KR',{maximumFractionDigits:0})+' 백만';
@@ -1043,7 +1094,89 @@ function clr(v){return v<0?'neg':'pos'}
 function niceMax(v){if(v<=0)return 100;const t=v*1.15;if(t<=100)return Math.ceil(t/50)*50;return Math.ceil(t/200)*200}
 function _ch(id,type,data,opts={}){if(CH[id])CH[id].destroy();CH[id]=new Chart(document.getElementById(id),{type,data,options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:11}}}},...opts}})}
 
-function renderAll(){if(!D)return;renderCapital();renderRevenue();renderProjects();renderAI()}
+function renderAll(){if(!D)return;renderCapital();renderRevenue();renderProjects();renderAI();renderEarlyExec()}
+
+// ═══════════════════════════════════════
+// 투자비 조기집행 분석
+// ═══════════════════════════════════════
+function renderEarlyExec(){
+    if(!D)return;
+    const comp=D.capital.budget_comparison;
+    const pct=parseInt(document.getElementById('capTargetPct').value)||60;
+    const deadline=parseInt(document.getElementById('capTargetMonth').value)||6;
+    const now=new Date();
+    const curMonth=now.getMonth()+1;
+    const totalBudget=comp.reduce((s,r)=>s+r['배정예산'],0);
+    const totalExec=comp.reduce((s,r)=>s+r['집행실적'],0);
+    const totalForecast=comp.reduce((s,r)=>s+r['예상집행'],0);
+    const targetAmt=totalBudget*pct/100;
+    const gap=targetAmt-totalExec;
+    const achievedPct=targetAmt>0?+(totalExec/targetAmt*100).toFixed(1):0;
+    const isOverdue=curMonth>deadline;
+    const remainMonths=Math.max(0,deadline-curMonth);
+
+    const body=document.getElementById('capEarlyBody');
+    if(totalBudget<=0){body.innerHTML='<div style="font-size:12px;color:#92400E;text-align:center;padding:8px">배정예산을 먼저 입력하세요</div>';return}
+
+    let html='';
+    // 전체 요약
+    const barPct=Math.min(100,achievedPct);
+    const barColor=achievedPct>=100?'var(--green)':achievedPct>=70?'var(--amber)':'var(--red)';
+    const statusText=achievedPct>=100?'목표 달성':isOverdue?'기한 초과':'진행중';
+    const statusColor=achievedPct>=100?'var(--green)':isOverdue?'var(--red)':'var(--amber)';
+
+    html+=`<div class="ee-total">`;
+    html+=`<div><div class="ee-total-label">목표: 전체 배정예산의 ${pct}% (${deadline}월 이내)</div>`;
+    html+=`<div style="display:flex;align-items:center;gap:12px;margin-top:6px">`;
+    html+=`<div class="ee-total-value">${(targetAmt/1e8).toFixed(1)}억 중 ${(totalExec/1e8).toFixed(1)}억 집행</div>`;
+    html+=`<span class="bg" style="background:${statusColor};color:#fff;padding:3px 10px;font-size:10px">${statusText}</span>`;
+    html+=`</div></div>`;
+    html+=`<div style="text-align:right"><div class="ee-total-value" style="color:${barColor}">${achievedPct}%</div>`;
+    html+=`<div class="ee-total-sub">${gap>0?'부족: '+(gap/1e8).toFixed(1)+'억':''}</div></div>`;
+    html+=`</div>`;
+
+    // 전체 프로그레스바
+    html+=`<div style="margin-top:8px;height:12px;background:#F3F4F6;border-radius:6px;overflow:hidden;position:relative">`;
+    html+=`<div style="height:100%;width:${barPct}%;background:${barColor};border-radius:6px;transition:width .3s"></div>`;
+    html+=`</div>`;
+
+    // 과목별 기여도
+    html+=`<div style="margin-top:12px;font-size:11px;font-weight:700;color:#92400E">과목별 집행 현황</div>`;
+    html+=`<div class="ee-grid" style="margin-top:6px">`;
+    const sorted=[...comp].filter(r=>r['배정예산']>0||r['집행실적']>0).sort((a,b)=>b['집행실적']-a['집행실적']);
+    sorted.forEach(r=>{
+        const catBudget=r['배정예산'];
+        const catExec=r['집행실적'];
+        const catTarget=catBudget*pct/100;
+        const catPct=catTarget>0?Math.min(200,+(catExec/catTarget*100).toFixed(1)):0;
+        const cls=catPct>=100?'ee-over':catPct>=70?'ee-close':'ee-behind';
+        const fillW=Math.min(100,catPct);
+        html+=`<div class="ee-item ${cls}">`;
+        html+=`<div class="ee-name">${r['예산과목']}</div>`;
+        html+=`<div class="ee-bar"><div class="ee-fill" style="width:${fillW}%"></div></div>`;
+        html+=`<div class="ee-nums"><span>${fw(catExec)} / ${fw(catTarget)}</span><span class="ee-achieved">${catPct}%</span></div>`;
+        html+=`</div>`;
+    });
+    html+=`</div>`;
+
+    // 남은 기간 안내
+    if(gap>0&&!isOverdue&&remainMonths>0){
+        const monthlyNeeded=gap/remainMonths;
+        html+=`<div style="margin-top:10px;padding:8px 12px;background:#FEF3C7;border-radius:6px;font-size:11px;color:#92400E">`;
+        html+=`&#128197; ${deadline}월까지 ${remainMonths}개월 남음 &mdash; 월평균 <b>${(monthlyNeeded/1e8).toFixed(2)}억</b> 추가 집행 필요`;
+        html+=`</div>`;
+    }else if(gap>0&&isOverdue){
+        html+=`<div style="margin-top:10px;padding:8px 12px;background:#FEE2E2;border-radius:6px;font-size:11px;color:#991B1B">`;
+        html+=`&#9888; 기한(${deadline}월) 경과 &mdash; 목표 대비 <b>${(gap/1e8).toFixed(1)}억</b> 미달`;
+        html+=`</div>`;
+    }else if(gap<=0){
+        html+=`<div style="margin-top:10px;padding:8px 12px;background:#D1FAE5;border-radius:6px;font-size:11px;color:#065F46">`;
+        html+=`&#10003; 조기집행 목표 달성! 배정예산의 ${pct}% 이상 집행 완료`;
+        html+=`</div>`;
+    }
+
+    body.innerHTML=html;
+}
 
 // ═══════════════════════════════════════
 // AI 분석 패널 렌더
@@ -1213,7 +1346,7 @@ function recalcBudget(inp){
     cells[11].innerHTML=br(r['예상집행율']);
     updateTotals(sec);
     updateSummaryCards(sec);
-    saveBudgets();
+    if(sec==='cap')renderEarlyExec();
 }
 
 function updateTotals(sec){
@@ -1321,6 +1454,8 @@ function setupPT(rows,tId,srchId,filtId,catKey,dK,pK,eK){
 window.addEventListener('DOMContentLoaded',async()=>{
     const now=new Date();const y=now.getFullYear();const m=String(now.getMonth()+1).padStart(2,'0');const d=String(now.getDate()).padStart(2,'0');const wd=['일','월','화','수','목','금','토'][now.getDay()];
     document.getElementById('today').textContent=y+'.'+m+'.'+d+' ('+wd+')';
+    // 빈 데이터로 대시보드 바로 표시 (배정예산 먼저 입력 가능)
+    try{const r=await fetch('/api/init');const j=await r.json();D=j;renderAll()}catch(e){}
 });
 </script>
 </body>
@@ -1333,6 +1468,35 @@ window.addEventListener('DOMContentLoaded',async()=>{
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
+
+
+@app.route('/api/init')
+def api_init():
+    """배정예산 입력용 빈 데이터 구조 반환"""
+    def _empty_comp(budget_dict):
+        return [{
+            '사업코드': bcode, '예산과목': bname,
+            '배정예산_백만': bval_mil, '배정예산': bval_mil * 1_000_000,
+            '소비금액': 0, '약정금액': 0,
+            '집행실적': 0, '잔액': bval_mil * 1_000_000,
+            '집행율': 0, '진행중공사비': 0, '예상집행': 0,
+            '예상잔액': bval_mil * 1_000_000, '예상집행율': 0,
+            '건수': 0, '상태': '미달',
+        } for bname, (bcode, bval_mil) in budget_dict.items()]
+
+    def _empty_summary():
+        return {'배정예산': 0, '소비금액': 0, '약정금액': 0,
+                '집행실적': 0, '잔액': 0, '집행율': 0,
+                '진행중공사비': 0, '예상집행': 0, '예상잔액': 0,
+                '예상집행율': 0, '공사건수': 0, '초과항목': 0}
+
+    return jsonify({
+        'capital': {'summary': _empty_summary(), 'budget_comparison': _empty_comp(BUDGET_CAPITAL),
+                    'category': [], 'status': {}, 'budget_sheets': {}},
+        'revenue': {'summary': _empty_summary(), 'budget_comparison': _empty_comp(BUDGET_REVENUE),
+                    'category': [], 'status': {}, 'budget_sheets': {}},
+        'projects': [],
+    })
 
 
 @app.route('/api/analyze', methods=['POST'])
