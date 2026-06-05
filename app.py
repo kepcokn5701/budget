@@ -8,25 +8,26 @@ app = Flask(__name__)
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+LAST_FILE = None
 
 # ──────────────────────────────────────────────
 # 1. 배정예산 데이터 (백만원)
 # ──────────────────────────────────────────────
 BUDGET_CAPITAL = {
     #  사업명: (자금운용사업코드, 배정예산(백만원))
-    '가공저압설비보강': ('310400201180203', 225),
-    '취약선로보강': ('310400203200089', 199),
-    '가공고압설비보강': ('310400208200094', 833),
-    '노후 가공변압기 교체': ('310400212200088', 138),
-    '과부하 가공변압기 교체': ('310400214200084', 89),
-    '강도부족전주 교체': ('310400225200084', 182),
-    '가공개폐기 교체': ('310400226200081', 88),
-    'PCBS근절 변압기 교체': ('70H120224128', 180),
-    '차량충돌복구공사': ('310400218200086', 41),
-    '고장변압기 교체': ('310400213200087', 91),
-    '재해설비 피해복구': ('70H120234279', 35),
-    '가공설비고장복구': ('310400219200086', 115),
-    '수선비/자본연계(가공보강)': ('S20245-575N-2019', 296),
+    '가공저압설비보강': ('310400201180203', 0),
+    '취약선로보강': ('310400203200089', 0),
+    '가공고압설비보강': ('310400208200094', 0),
+    '노후 가공변압기 교체': ('310400212200088', 0),
+    '과부하 가공변압기 교체': ('310400214200084', 0),
+    '강도부족전주 교체': ('310400225200084', 0),
+    '가공개폐기 교체': ('310400226200081', 0),
+    'PCBS근절 변압기 교체': ('70H120224128', 0),
+    '차량충돌복구공사': ('310400218200086', 0),
+    '고장변압기 교체': ('310400213200087', 0),
+    '재해설비 피해복구': ('70H120234279', 0),
+    '가공설비고장복구': ('310400219200086', 0),
+    '수선비/자본연계(가공보강)': ('S20245-575N-2019', 0),
 }
 
 CAPITAL_CAT_MAP = {
@@ -46,22 +47,22 @@ CAPITAL_CAT_MAP = {
 
 # ── 손익(수선비) 배정예산 ──
 BUDGET_REVENUE = {
-    '배전경상': ('S10030', 37),
-    '내선경상': ('S10040', 2),
-    '가공배전설비진단': ('S20110', 73),
-    '배전수목전지': ('S20140', 91),
-    '배전조류고장예방': ('S20150', 76),
-    '배전염진해낙뢰': ('S20160', 45),
-    '가공배전기타계획(주요설비)': ('S20176', 105),
-    '가공배전기타계획(기타설비)': ('S20180', 79),
-    '계기함정비': ('S20190', 13),
-    '자본연계(공급_선진)': ('S20240', 18),
-    '자본연계(보강/가공)': ('S20245', 796),
-    '지중배전기타점검(주요설비)': ('S20265', 8),
+    '배전경상': ('S10030', 0),
+    '내선경상': ('S10040', 0),
+    '가공배전설비진단': ('S20110', 0),
+    '배전수목전지': ('S20140', 0),
+    '배전조류고장예방': ('S20150', 0),
+    '배전염진해낙뢰': ('S20160', 0),
+    '가공배전기타계획(주요설비)': ('S20176', 0),
+    '가공배전기타계획(기타설비)': ('S20180', 0),
+    '계기함정비': ('S20190', 0),
+    '자본연계(공급_선진)': ('S20240', 0),
+    '자본연계(보강/가공)': ('S20245', 0),
+    '지중배전기타점검(주요설비)': ('S20265', 0),
     '배전기자재수리': ('S20290', 0),
-    '자본연계(신규)': ('S20220', 131),
-    '자본연계(지장)': ('S20230', 525),
-    '자본연계(보강/내선)': ('S20247', 141),
+    '자본연계(신규)': ('S20220', 0),
+    '자본연계(지장)': ('S20230', 0),
+    '자본연계(보강/내선)': ('S20247', 0),
 }
 
 REVENUE_CAT_MAP = {
@@ -132,41 +133,107 @@ def parse_and_analyze(filepath):
         ledger_sheet = xls.sheet_names[0]
 
     df = pd.read_excel(xls, sheet_name=ledger_sheet, header=None)
-    header_row = 1
+
+    # ── 헤더 행 찾기 ──
+    header_row = 0
     for i in range(min(5, len(df))):
         if pd.notna(df.iloc[i, 0]) and '순번' in str(df.iloc[i, 0]):
             header_row = i
             break
 
+    # ── 서브헤더 확인 (더블 헤더) ──
+    data_start = header_row + 1
+    if data_start < len(df) and pd.notna(df.iloc[data_start, 0]) and '순번' in str(df.iloc[data_start, 0]):
+        data_start += 1
+
+    # ── 컬럼 자동 감지: 헤더에서 키워드로 컬럼 인덱스 매핑 ──
+    def _find_col(keyword, row_range=None):
+        if row_range is None:
+            row_range = range(header_row, data_start)
+        for r in row_range:
+            for c in range(df.shape[1]):
+                v = str(df.iloc[r, c]).strip() if pd.notna(df.iloc[r, c]) else ''
+                if keyword in v:
+                    return c
+        return None
+
+    col_cno = _find_col('공사번호') or 1
+    col_char = _find_col('공사성격') or 4
+    col_company = _find_col('협력회사') or _find_col('시공회사') or _find_col('공사업체') or 6
+    col_cat_cap = _find_col('자본예산과목') or 9
+    col_cat_rev = _find_col('손익예산과목') or 10
+    col_status = _find_col('공사 상태') or _find_col('공사상태') or 22
+    col_start_date = _find_col('착공') or 14
+
+    # 금액 컬럼: 총공사비(자본/수익) 감지
+    # 서브헤더에서 '자본'/'수익' 찾기 (총공사비 그룹 하위)
+    col_cost_cap = None
+    col_cost_rev = None
+    sub_row = data_start - 1
+    for c in range(df.shape[1]):
+        h0 = str(df.iloc[header_row, c]).strip() if pd.notna(df.iloc[header_row, c]) else ''
+        h1 = str(df.iloc[sub_row, c]).strip() if sub_row > header_row and pd.notna(df.iloc[sub_row, c]) else ''
+        if '총공사비' in h0 and '자본' in h1:
+            col_cost_cap = c
+        elif '총공사비' in h0 and ('수익' in h1 or '손익' in h1):
+            col_cost_rev = c
+
+    # 총공사비 자본/수익 못 찾으면 구형 포맷 (41, 47 등) 시도
+    is_old_format = col_cost_cap is None
+    if is_old_format:
+        col_cat_cap = 13
+        col_cat_rev = 14
+        col_status = 26
+        col_start_date = 18
+
     projects = []
-    for i in range(header_row + 1, len(df)):
+    for i in range(data_start, len(df)):
         row = df.iloc[i]
-        cno = row[1] if 1 < df.shape[1] else None
+        cno = row[col_cno] if col_cno < df.shape[1] else None
         if pd.isna(cno) or str(cno).strip() == '':
             continue
 
-        cat_capital = str(row[13]).strip() if 13 < df.shape[1] and pd.notna(row.get(13)) else '미분류'
+        cat_capital = str(row[col_cat_cap]).strip() if col_cat_cap < df.shape[1] and pd.notna(row.get(col_cat_cap)) else '미분류'
         # 손익예산과목: "배전경상-경남/통영/전력공급팀" → "배전경상"
-        raw_rev = str(row[14]).strip() if 14 < df.shape[1] and pd.notna(row.get(14)) else '미분류'
+        raw_rev = str(row[col_cat_rev]).strip() if col_cat_rev < df.shape[1] and pd.notna(row.get(col_cat_rev)) else '미분류'
         cat_revenue = raw_rev.split('-')[0].strip() if '-' in raw_rev else raw_rev
-        status = str(row[26]).strip() if 26 < df.shape[1] and pd.notna(row.get(26)) else '미확인'
+        status = str(row[col_status]).strip() if col_status < df.shape[1] and pd.notna(row.get(col_status)) else '미확인'
+
+        if is_old_format:
+            # 구형 포맷 (예산관리 엑셀.xlsx)
+            cost_cap = _num(row[41]) if 41 < df.shape[1] else 0
+            paid_cap = _num(row[47]) if 47 < df.shape[1] else 0
+            est_cap = _num(row[51]) if 51 < df.shape[1] else 0
+            cost_rev = _num(row[42]) if 42 < df.shape[1] else 0
+            paid_rev = _num(row[48]) if 48 < df.shape[1] else 0
+            est_rev = _num(row[52]) if 52 < df.shape[1] else 0
+        else:
+            # 신규 포맷 (공사관리대장조회.xlsx)
+            cost_cap = _num(row[col_cost_cap]) if col_cost_cap else 0
+            cost_rev = _num(row[col_cost_rev]) if col_cost_rev else 0
+            if '완료' in status:
+                paid_cap, paid_rev = cost_cap, cost_rev
+                est_cap, est_rev = 0, 0
+            else:
+                paid_cap, paid_rev = 0, 0
+                est_cap, est_rev = cost_cap, cost_rev
 
         projects.append({
             '공사번호': str(cno).strip(),
-            '공사성격': str(row[4]).strip() if 4 < df.shape[1] and pd.notna(row.get(4)) else '',
-            '공사업체': str(row[6]).strip() if 6 < df.shape[1] and pd.notna(row.get(6)) else '',
+            '공사성격': str(row[col_char]).strip() if col_char < df.shape[1] and pd.notna(row.get(col_char)) else '',
+            '공사업체': str(row[col_company]).strip() if col_company < df.shape[1] and pd.notna(row.get(col_company)) else '',
             '자본예산과목': cat_capital,
             '손익예산과목': cat_revenue,
-            '총공사비_설계': _num(row[15]) if 15 < df.shape[1] else 0,
-            '도급비_계약': _num(row[17]) if 17 < df.shape[1] else 0,
-            '착공일': _date_str(row[18]) if 18 < df.shape[1] else '',
+            '총공사비_설계': _num(row[11]) if 11 < df.shape[1] else 0,
+            '도급비_계약': _num(row[13]) if 13 < df.shape[1] else 0,
+            '착공일': _date_str(row[col_start_date]) if col_start_date < df.shape[1] else '',
             '공사상태': status,
-            '설계_자본': _num(row[41]) if 41 < df.shape[1] else 0,
-            '기성_자본': _num(row[47]) if 47 < df.shape[1] else 0,
-            '예정_자본': _num(row[51]) if 51 < df.shape[1] else 0,
-            '설계_손익': _num(row[42]) if 42 < df.shape[1] else 0,
-            '기성_손익': _num(row[48]) if 48 < df.shape[1] else 0,
-            '예정_손익': _num(row[52]) if 52 < df.shape[1] else 0,
+            '설계_자본': cost_cap,
+            '기성_자본': paid_cap,
+            '예정_자본': est_cap,
+            '설계_손익': cost_rev,
+            '기성_손익': paid_rev,
+            '예정_손익': est_rev,
         })
 
     # ── 기성고 시트 ──
@@ -478,6 +545,14 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 .add-row-btn{margin-top:10px;padding:7px 18px;background:var(--card);border:1px dashed var(--navy-light);color:var(--navy2);border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
 .add-row-btn:hover{background:var(--navy2);color:#fff;border-style:solid}
 
+/* ── Empty state ── */
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;color:var(--text3);gap:16px}
+.empty-state .es-icon{font-size:56px;opacity:.4}
+.empty-state .es-title{font-size:20px;font-weight:700;color:var(--text2)}
+.empty-state .es-desc{font-size:13px;color:var(--text3);text-align:center;line-height:1.6}
+.empty-state .es-btn{margin-top:8px;padding:10px 28px;background:var(--orange);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;transition:background .15s}
+.empty-state .es-btn:hover{background:var(--orange-light)}
+
 /* ── Responsive ── */
 @media(max-width:1200px){.cards{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}}
@@ -496,6 +571,24 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </div>
 </header>
 <div class="wrap">
+
+<!-- ═══ 빈 상태 안내 ═══ -->
+<div class="empty-state" id="emptyState">
+<div class="es-icon">&#128203;</div>
+<div class="es-title">공사관리대장 파일을 업로드하세요</div>
+<div class="es-desc">엑셀(.xlsx) 파일을 업로드하면<br>예산 집행현황을 분석합니다.</div>
+<button class="es-btn" onclick="document.getElementById('fi').click()">파일 선택</button>
+</div>
+
+<!-- ═══ 분석중 ═══ -->
+<div class="empty-state" id="loadingState" style="display:none">
+<div class="sp on" style="width:40px;height:40px;border-width:4px"></div>
+<div class="es-title">데이터 분석중...</div>
+<div class="es-desc">공사관리대장을 분석하고 있습니다.<br>잠시만 기다려주세요.</div>
+</div>
+
+<!-- ═══ 대시보드 본문 ═══ -->
+<div id="dashboardContent" style="display:none">
 <div class="main-tabs">
 <button class="mt cap" id="mtCap" onclick="switchMain('cap')">자본</button>
 <button class="mt rev off" id="mtRev" onclick="switchMain('rev')">손익</button>
@@ -509,7 +602,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="cd c4"><div class="lb">잔액 (A-D)</div><div class="vl" id="capE">-</div><div class="sb">배정예산 - 집행실적</div></div>
 <div class="cd c3"><div class="lb">진행중공사비 (F)</div><div class="vl" id="capF">-</div><div class="sb">미준공 금액</div></div>
 <div class="cd c5"><div class="lb">최종예상 (G=D+F)</div><div class="vl" id="capG">-</div><div class="sb" id="capGR">예상집행율 -</div></div>
-<div class="cd c6"><div class="lb">공사건수</div><div class="vl" id="capCnt">-</div><div class="sb" id="capOver">초과 -</div></div>
+<div class="cd c6"><div class="lb">공사건수</div><div class="vl" id="capCnt">-</div><div class="sb">&nbsp;</div></div>
 </div>
 <div class="stabs">
 <button class="st on" onclick="subTab('cap',this,'capBudget')">예산현황</button>
@@ -549,7 +642,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="cd c4"><div class="lb">잔액 (A-D)</div><div class="vl" id="revE">-</div><div class="sb">배정예산 - 집행실적</div></div>
 <div class="cd c3"><div class="lb">진행중공사비 (F)</div><div class="vl" id="revF">-</div><div class="sb">미준공 금액</div></div>
 <div class="cd c5"><div class="lb">최종예상 (G=D+F)</div><div class="vl" id="revG">-</div><div class="sb" id="revGR">예상집행율 -</div></div>
-<div class="cd c6"><div class="lb">공사건수</div><div class="vl" id="revCnt">-</div><div class="sb" id="revOver">초과 -</div></div>
+<div class="cd c6"><div class="lb">공사건수</div><div class="vl" id="revCnt">-</div><div class="sb">&nbsp;</div></div>
 </div>
 <div class="stabs">
 <button class="st on" onclick="subTab('rev',this,'revBudget')">예산현황</button>
@@ -581,6 +674,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </div>
 </div>
 </div>
+</div><!-- /dashboardContent -->
 
 <script>
 let D=null,CH={};
@@ -601,16 +695,50 @@ function subTab(prefix,btn,pane){
 document.getElementById('fi').addEventListener('change',async e=>{
     const f=e.target.files[0];if(!f)return;
     document.getElementById('fn').textContent=f.name;
-    const sp=document.getElementById('sp');sp.classList.add('on');
+    document.getElementById('emptyState').style.display='none';
+    document.getElementById('loadingState').style.display='flex';
+    document.getElementById('dashboardContent').style.display='none';
     const fd=new FormData();fd.append('file',f);
-    try{const r=await fetch('/api/analyze',{method:'POST',body:fd});const j=await r.json();if(j.error){alert(j.error);return}D=j;document.getElementById('refreshBtn').style.display='inline-block';renderAll()}
-    catch(err){alert(err.message)}finally{sp.classList.remove('on')}
+    try{const r=await fetch('/api/analyze',{method:'POST',body:fd});const j=await r.json();if(j.error){alert(j.error);document.getElementById('loadingState').style.display='none';document.getElementById('emptyState').style.display='flex';return}D=j;restoreBudgets();document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';document.getElementById('refreshBtn').style.display='inline-block';renderAll()}
+    catch(err){alert(err.message);document.getElementById('loadingState').style.display='none';document.getElementById('emptyState').style.display='flex'}
 });
 
 async function doRefresh(){
-    const sp=document.getElementById('sp');sp.classList.add('on');
-    try{const r=await fetch('/api/default');const j=await r.json();if(!j.error){D=j;renderAll()}}
-    catch(e){}finally{sp.classList.remove('on')}
+    document.getElementById('loadingState').style.display='flex';
+    document.getElementById('dashboardContent').style.display='none';
+    try{const r=await fetch('/api/refresh');const j=await r.json();if(j.error){alert(j.error);document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';return}D=j;restoreBudgets();document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';renderAll()}
+    catch(e){document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block'}
+}
+
+// ═══ 배정예산 localStorage 저장/복원 ═══
+function saveBudgets(){
+    if(!D)return;
+    const cap={},rev={};
+    D.capital.budget_comparison.forEach(r=>{cap[r['예산과목']]=r['배정예산']});
+    D.revenue.budget_comparison.forEach(r=>{rev[r['예산과목']]=r['배정예산']});
+    localStorage.setItem('budget_cap',JSON.stringify(cap));
+    localStorage.setItem('budget_rev',JSON.stringify(rev));
+}
+function restoreBudgets(){
+    if(!D)return;
+    ['capital','revenue'].forEach(dk=>{
+        const key=dk==='capital'?'budget_cap':'budget_rev';
+        const saved=localStorage.getItem(key);
+        if(!saved)return;
+        const map=JSON.parse(saved);
+        D[dk].budget_comparison.forEach(r=>{
+            const name=r['예산과목'];
+            if(name in map && map[name]>0){
+                const a=map[name];
+                r['배정예산']=a;r['배정예산_백만']=a/1e6;
+                const d=r['집행실적'],g=r['예상집행'];
+                r['잔액']=a-d;r['예상잔액']=a-g;
+                r['집행율']=a?+(d/a*100).toFixed(1):0;
+                r['예상집행율']=a?+(g/a*100).toFixed(1):0;
+                r['상태']=r['예상집행율']>100?'초과':r['예상집행율']>70?'양호':'미달';
+            }
+        });
+    });
 }
 
 const fm=v=>(v/1e6).toLocaleString('ko-KR',{maximumFractionDigits:0})+' 백만';
@@ -639,11 +767,10 @@ function renderCapital(){
     document.getElementById('capG').textContent=fm(s['예상집행']);
     document.getElementById('capGR').textContent='예상집행율 '+fp(s['예상집행율']);
     document.getElementById('capCnt').textContent=s['공사건수']+'건';
-    document.getElementById('capOver').textContent='초과 '+s['초과항목']+'건';
 
     const comp=D.capital.budget_comparison;
     const lb=[],aV=[],dV=[],gV=[];
-    comp.forEach(r=>{if(!r['배정예산_백만'])return;lb.push(sn(r['예산과목'],7));aV.push(r['배정예산_백만']);dV.push(Math.round(r['집행실적']/1e6));gV.push(Math.round(r['예상집행']/1e6))});
+    comp.forEach(r=>{if(!r['배정예산_백만']&&!r['집행실적']&&!r['예상집행'])return;lb.push(sn(r['예산과목'],7));aV.push(r['배정예산_백만']);dV.push(Math.round(r['집행실적']/1e6));gV.push(Math.round(r['예상집행']/1e6))});
     const capMax=Math.max(...aV,...dV,...gV);const capYMax=niceMax(capMax);
     _ch('chCapBar','bar',{labels:lb,datasets:[
         {label:'배정예산(A)',data:aV,backgroundColor:'rgba(59,130,246,.7)',borderColor:'rgba(59,130,246,1)',borderWidth:1,borderRadius:3},
@@ -678,11 +805,10 @@ function renderRevenue(){
     document.getElementById('revG').textContent=fm(s['예상집행']);
     document.getElementById('revGR').textContent='예상집행율 '+fp(s['예상집행율']);
     document.getElementById('revCnt').textContent=s['공사건수']+'건';
-    document.getElementById('revOver').textContent='초과 '+s['초과항목']+'건';
 
     const comp=D.revenue.budget_comparison;
     const lb=[],aV=[],dV=[],gV=[];
-    comp.forEach(r=>{if(!r['배정예산_백만'])return;lb.push(sn(r['예산과목'],7));aV.push(r['배정예산_백만']);dV.push(Math.round(r['집행실적']/1e6));gV.push(Math.round(r['예상집행']/1e6))});
+    comp.forEach(r=>{if(!r['배정예산_백만']&&!r['집행실적']&&!r['예상집행'])return;lb.push(sn(r['예산과목'],7));aV.push(r['배정예산_백만']);dV.push(Math.round(r['집행실적']/1e6));gV.push(Math.round(r['예상집행']/1e6))});
     const revMax=Math.max(...aV,...dV,...gV);const revYMax=niceMax(revMax);
     _ch('chRevBar','bar',{labels:lb,datasets:[
         {label:'배정예산(A)',data:aV,backgroundColor:'rgba(59,130,246,.7)',borderColor:'rgba(59,130,246,1)',borderWidth:1,borderRadius:3},
@@ -730,6 +856,7 @@ function recalcBudget(inp){
     cells[11].innerHTML=br(r['예상집행율']);
     updateTotals(sec);
     updateSummaryCards(sec);
+    saveBudgets();
 }
 
 function updateTotals(sec){
@@ -781,7 +908,6 @@ function updateSummaryCards(sec){
     document.getElementById(p+'F').textContent=fm(totF);
     document.getElementById(p+'G').textContent=fm(totG);
     document.getElementById(p+'GR').textContent='예상집행율 '+fp(sm['예상집행율']);
-    if(document.getElementById(p+'Over'))document.getElementById(p+'Over').textContent='초과 '+sm['초과항목']+'건';
 }
 
 // ═══════════════════════════════════════
@@ -838,7 +964,6 @@ function setupPT(rows,tId,srchId,filtId,catKey,dK,pK,eK){
 window.addEventListener('DOMContentLoaded',async()=>{
     const now=new Date();const y=now.getFullYear();const m=String(now.getMonth()+1).padStart(2,'0');const d=String(now.getDate()).padStart(2,'0');const wd=['일','월','화','수','목','금','토'][now.getDay()];
     document.getElementById('today').textContent=y+'.'+m+'.'+d+' ('+wd+')';
-    try{const r=await fetch('/api/default');const j=await r.json();if(!j.error){D=j;document.getElementById('fn').textContent='기본 데이터 로드됨';document.getElementById('refreshBtn').style.display='inline-block';renderAll()}}catch(e){}
 });
 </script>
 </body>
@@ -860,21 +985,22 @@ def api_analyze():
     f = request.files['file']
     if f.filename == '':
         return jsonify({'error': '파일명이 비어있습니다.'}), 400
+    global LAST_FILE
     filepath = os.path.join(UPLOAD_FOLDER, f.filename)
     f.save(filepath)
+    LAST_FILE = filepath
     try:
         return jsonify(parse_and_analyze(filepath))
     except Exception as e:
         return jsonify({'error': f'분석 오류: {str(e)}'}), 500
 
 
-@app.route('/api/default')
-def api_default():
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '예산관리 엑셀.xlsx')
-    if not os.path.exists(path):
-        return jsonify({'error': '기본 파일 없음'}), 404
+@app.route('/api/refresh')
+def api_refresh():
+    if not LAST_FILE or not os.path.exists(LAST_FILE):
+        return jsonify({'error': '업로드된 파일이 없습니다.'}), 404
     try:
-        return jsonify(parse_and_analyze(path))
+        return jsonify(parse_and_analyze(LAST_FILE))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
