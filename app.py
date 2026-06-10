@@ -838,13 +838,6 @@ def parse_and_analyze(filepath):
                                cap_pred, rev_pred,
                                cap_anomalies, rev_anomalies,
                                BUDGET_CAPITAL, BUDGET_REVENUE)
-    cap_burndown = _burndown_forecast(cap_comparison, BUDGET_CAPITAL)
-    rev_burndown = _burndown_forecast(rev_comparison, BUDGET_REVENUE)
-    cap_whatif = _whatif_baseline(cap_comparison, BUDGET_CAPITAL)
-    rev_whatif = _whatif_baseline(rev_comparison, BUDGET_REVENUE)
-    delay_risks = _delay_risk_scores(projects)
-    realloc = _reallocation_recommendations(cap_comparison, rev_comparison)
-
     return {
         'capital': {
             'summary': cap_summary,
@@ -864,15 +857,11 @@ def parse_and_analyze(filepath):
         'ai_analysis': {
             'capital': {
                 'predictions': cap_pred, 'anomalies': cap_anomalies,
-                'burndown': cap_burndown, 'whatif': cap_whatif,
             },
             'revenue': {
                 'predictions': rev_pred, 'anomalies': rev_anomalies,
-                'burndown': rev_burndown, 'whatif': rev_whatif,
             },
             'report': report,
-            'delay_risks': delay_risks,
-            'reallocation': realloc,
         },
     }
 
@@ -2136,6 +2125,11 @@ def api_init():
         'revenue': {'summary': _summary(rev_comp), 'budget_comparison': rev_comp,
                     'category': [], 'status': {}, 'budget_sheets': {}},
         'projects': [],
+        'ai_analysis': {
+            'capital': {'predictions': [], 'anomalies': []},
+            'revenue': {'predictions': [], 'anomalies': []},
+            'report': '',
+        },
     })
 
 
@@ -2167,6 +2161,15 @@ def api_analyze():
         saved = _load_saved_budgets()
         _apply_saved_budgets(result['capital']['budget_comparison'], 'capital', saved)
         _apply_saved_budgets(result['revenue']['budget_comparison'], 'revenue', saved)
+        # 배정예산 적용 후 AI 분석 수행
+        cap_comp = result['capital']['budget_comparison']
+        rev_comp = result['revenue']['budget_comparison']
+        result['ai_analysis']['capital']['burndown'] = _burndown_forecast(cap_comp, BUDGET_CAPITAL)
+        result['ai_analysis']['capital']['whatif'] = _whatif_baseline(cap_comp, BUDGET_CAPITAL)
+        result['ai_analysis']['revenue']['burndown'] = _burndown_forecast(rev_comp, BUDGET_REVENUE)
+        result['ai_analysis']['revenue']['whatif'] = _whatif_baseline(rev_comp, BUDGET_REVENUE)
+        result['ai_analysis']['delay_risks'] = _delay_risk_scores(result.get('projects', []))
+        result['ai_analysis']['reallocation'] = _reallocation_recommendations(cap_comp, rev_comp)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': f'분석 오류: {str(e)}'}), 500
@@ -2181,6 +2184,15 @@ def api_refresh():
         saved = _load_saved_budgets()
         _apply_saved_budgets(result['capital']['budget_comparison'], 'capital', saved)
         _apply_saved_budgets(result['revenue']['budget_comparison'], 'revenue', saved)
+        # 배정예산 적용 후 AI 분석 수행
+        cap_comp = result['capital']['budget_comparison']
+        rev_comp = result['revenue']['budget_comparison']
+        result['ai_analysis']['capital']['burndown'] = _burndown_forecast(cap_comp, BUDGET_CAPITAL)
+        result['ai_analysis']['capital']['whatif'] = _whatif_baseline(cap_comp, BUDGET_CAPITAL)
+        result['ai_analysis']['revenue']['burndown'] = _burndown_forecast(rev_comp, BUDGET_REVENUE)
+        result['ai_analysis']['revenue']['whatif'] = _whatif_baseline(rev_comp, BUDGET_REVENUE)
+        result['ai_analysis']['delay_risks'] = _delay_risk_scores(result.get('projects', []))
+        result['ai_analysis']['reallocation'] = _reallocation_recommendations(cap_comp, rev_comp)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
