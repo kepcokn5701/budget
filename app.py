@@ -468,58 +468,55 @@ def _whatif_baseline(comparison, budget_dict):
     }
 
 
-def _reallocation_recommendations(cap_comparison, rev_comparison):
-    """예산 재배분 추천: 잉여 항목 → 부족 항목 이전 제안"""
+def _reallocation_recommendations(comparison):
+    """예산 재배분 추천: 잉여 항목 → 부족 항목 이전 제안 (단일 섹션)"""
     recommendations = []
-    for label, comparison in [('자본', cap_comparison), ('손익', rev_comparison)]:
-        surplus_items, deficit_items = [], []
-        for r in comparison:
-            budget = r['배정예산']
-            if budget <= 0:
+    surplus_items, deficit_items = [], []
+    for r in comparison:
+        budget = r['배정예산']
+        if budget <= 0:
+            continue
+        fc_rate = r['예상집행율']
+        remaining = budget - r['예상집행']
+        if fc_rate < 70 and remaining > 1_000_000:
+            surplus_items.append({
+                '예산과목': r['예산과목'], '배정예산': budget,
+                '예상집행': r['예상집행'], '예상집행율': fc_rate, '잉여액': remaining,
+            })
+        if fc_rate > 90:
+            shortfall = r['예상집행'] - budget if r['예상집행'] > budget else 0
+            deficit_items.append({
+                '예산과목': r['예산과목'], '배정예산': budget,
+                '예상집행': r['예상집행'], '예상집행율': fc_rate, '부족액': shortfall,
+            })
+    surplus_items.sort(key=lambda x: x['잉여액'], reverse=True)
+    deficit_items.sort(key=lambda x: x['예상집행율'], reverse=True)
+    for deficit in deficit_items:
+        if deficit['부족액'] <= 0:
+            continue
+        remaining_need = deficit['부족액']
+        for surplus in surplus_items:
+            if surplus['잉여액'] <= 0:
                 continue
-            fc_rate = r['예상집행율']
-            remaining = budget - r['예상집행']
-            if fc_rate < 70 and remaining > 1_000_000:
-                surplus_items.append({
-                    '예산과목': r['예산과목'], '배정예산': budget,
-                    '예상집행': r['예상집행'], '예상집행율': fc_rate, '잉여액': remaining,
-                    'section': label,
-                })
-            if fc_rate > 90:
-                shortfall = r['예상집행'] - budget if r['예상집행'] > budget else 0
-                deficit_items.append({
-                    '예산과목': r['예산과목'], '배정예산': budget,
-                    '예상집행': r['예상집행'], '예상집행율': fc_rate, '부족액': shortfall,
-                    'section': label,
-                })
-        surplus_items.sort(key=lambda x: x['잉여액'], reverse=True)
-        deficit_items.sort(key=lambda x: x['예상집행율'], reverse=True)
-        for deficit in deficit_items:
-            if deficit['부족액'] <= 0:
+            transfer = min(remaining_need, surplus['잉여액'] * 0.5)
+            if transfer < 500_000:
                 continue
-            remaining_need = deficit['부족액']
-            for surplus in surplus_items:
-                if surplus['잉여액'] <= 0:
-                    continue
-                transfer = min(remaining_need, surplus['잉여액'] * 0.5)
-                if transfer < 500_000:
-                    continue
-                new_surplus_rate = round(surplus['예상집행'] / (surplus['배정예산'] - transfer) * 100, 1) if (surplus['배정예산'] - transfer) > 0 else 0
-                new_deficit_rate = round(deficit['예상집행'] / (deficit['배정예산'] + transfer) * 100, 1) if (deficit['배정예산'] + transfer) > 0 else 0
-                recommendations.append({
-                    'source': surplus['예산과목'], 'source_section': surplus['section'],
-                    'source_budget': surplus['배정예산'], 'source_fc_rate': surplus['예상집행율'],
-                    'source_new_rate': new_surplus_rate,
-                    'target': deficit['예산과목'], 'target_section': deficit['section'],
-                    'target_budget': deficit['배정예산'], 'target_fc_rate': deficit['예상집행율'],
-                    'target_new_rate': new_deficit_rate,
-                    'amount': round(transfer),
-                    'reason': f"{surplus['예산과목']} 잔액 {surplus['잉여액']/1e8:.1f}억 → {deficit['예산과목']} 부족분 {deficit['부족액']/1e8:.1f}억 이전",
-                })
-                remaining_need -= transfer
-                surplus['잉여액'] -= transfer
-                if remaining_need <= 0:
-                    break
+            new_surplus_rate = round(surplus['예상집행'] / (surplus['배정예산'] - transfer) * 100, 1) if (surplus['배정예산'] - transfer) > 0 else 0
+            new_deficit_rate = round(deficit['예상집행'] / (deficit['배정예산'] + transfer) * 100, 1) if (deficit['배정예산'] + transfer) > 0 else 0
+            recommendations.append({
+                'source': surplus['예산과목'],
+                'source_budget': surplus['배정예산'], 'source_fc_rate': surplus['예상집행율'],
+                'source_new_rate': new_surplus_rate,
+                'target': deficit['예산과목'],
+                'target_budget': deficit['배정예산'], 'target_fc_rate': deficit['예상집행율'],
+                'target_new_rate': new_deficit_rate,
+                'amount': round(transfer),
+                'reason': f"{surplus['예산과목']} 잔액 {surplus['잉여액']/1e8:.1f}억 → {deficit['예산과목']} 부족분 {deficit['부족액']/1e8:.1f}억 이전",
+            })
+            remaining_need -= transfer
+            surplus['잉여액'] -= transfer
+            if remaining_need <= 0:
+                break
     total_surplus = sum(r['amount'] for r in recommendations)
     return {'recommendations': recommendations[:10], 'total_transferable': total_surplus, 'count': len(recommendations)}
 
@@ -1177,6 +1174,11 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="whatif-chart-wrap"><canvas id="chCapWhatif" style="max-height:200px"></canvas></div>
 <div id="capWhatifMessage" class="whatif-message"></div>
 </div>
+<div class="ai-panel realloc-panel" id="capReallocPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#7C3AED,#6D28D9)">&#8644;</div> 예산 재배분 추천 (자본)</div>
+<div class="ai-summary" id="capReallocSummary"></div>
+<div id="capReallocBody"></div>
+</div>
 <div class="stabs">
 <button class="st on" onclick="subTab('cap',this,'capBudget')">예산현황</button>
 <button class="st" onclick="subTab('cap',this,'capProj')">공사목록</button>
@@ -1250,6 +1252,11 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="whatif-chart-wrap"><canvas id="chRevWhatif" style="max-height:200px"></canvas></div>
 <div id="revWhatifMessage" class="whatif-message"></div>
 </div>
+<div class="ai-panel realloc-panel" id="revReallocPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#7C3AED,#6D28D9)">&#8644;</div> 예산 재배분 추천 (손익)</div>
+<div class="ai-summary" id="revReallocSummary"></div>
+<div id="revReallocBody"></div>
+</div>
 <div class="stabs">
 <button class="st on" onclick="subTab('rev',this,'revBudget')">예산현황</button>
 <button class="st" onclick="subTab('rev',this,'revProj')">공사목록</button>
@@ -1282,12 +1289,6 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="tb"><h3>공사목록 (손익)</h3><div class="sc"><table id="tRevProj"><thead><tr><th>No</th><th>공사번호</th><th>손익예산과목</th><th>공사업체</th><th>공사상태</th><th>착공일</th><th>현장시공<br>완료일</th><th>준공일</th><th>설계(손익)</th><th>기성(손익)</th><th>예정(손익)</th><th>기성율</th></tr></thead><tbody></tbody></table></div></div>
 </div>
 </div>
-</div>
-<!-- Reallocation Panel (global) -->
-<div class="ai-panel realloc-panel" id="reallocPanel" style="display:none">
-<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#7C3AED,#6D28D9)">&#8644;</div> 예산 재배분 추천</div>
-<div class="ai-summary" id="reallocSummary"></div>
-<div id="reallocBody"></div>
 </div>
 </div><!-- /dashboardContent -->
 
@@ -1715,13 +1716,19 @@ function updateWhatif(prefix){
 // Feature 6: 예산 재배분 추천
 // ═══════════════════════════════════════
 function renderReallocation(){
-    if(!D||!D.ai_analysis||!D.ai_analysis.reallocation)return;
-    const ra=D.ai_analysis.reallocation;
-    const panel=document.getElementById('reallocPanel');
-    const summaryEl=document.getElementById('reallocSummary');
-    const bodyEl=document.getElementById('reallocBody');
+    if(!D||!D.ai_analysis)return;
+    _renderReallocPanel('cap','capital');
+    _renderReallocPanel('rev','revenue');
+}
+function _renderReallocPanel(prefix,dataKey){
+    const ai=D.ai_analysis[dataKey];
+    if(!ai||!ai.reallocation)return;
+    const ra=ai.reallocation;
+    const panel=document.getElementById(prefix+'ReallocPanel');
+    const summaryEl=document.getElementById(prefix+'ReallocSummary');
+    const bodyEl=document.getElementById(prefix+'ReallocBody');
     if(!ra.recommendations||ra.recommendations.length===0){
-        const hasBudget=D.capital.budget_comparison.some(r=>r['배정예산']>0)||D.revenue.budget_comparison.some(r=>r['배정예산']>0);
+        const hasBudget=D[dataKey].budget_comparison.some(r=>r['배정예산']>0);
         if(!hasBudget){panel.style.display='none';return}
         panel.style.display='block';
         summaryEl.innerHTML='<div class="ai-stat" style="grid-column:1/-1"><div class="ai-label">분석 결과</div><div class="ai-value" style="color:var(--green)">재배분 불필요</div><div class="ai-sub">모든 항목이 적정 범위 내에서 집행 중입니다</div></div>';
@@ -1736,11 +1743,11 @@ function renderReallocation(){
     let bodyHtml='';
     ra.recommendations.forEach(r=>{
         bodyHtml+='<div class="realloc-card">';
-        bodyHtml+='<div class="rc-box"><div class="rc-section">['+r.source_section+']</div><div class="rc-name">'+r.source+'</div><div class="rc-detail">예산 '+(r.source_budget/1e8).toFixed(1)+'억 | 예상집행율 <span class="rc-rate-change" style="color:var(--green)">'+r.source_fc_rate+'%</span></div></div>';
+        bodyHtml+='<div class="rc-box"><div class="rc-name">'+r.source+'</div><div class="rc-detail">예산 '+(r.source_budget/1e8).toFixed(1)+'억 | 예상집행율 <span class="rc-rate-change" style="color:var(--green)">'+r.source_fc_rate+'%</span></div></div>';
         bodyHtml+='<div class="rc-arrow">&#10132;</div>';
         bodyHtml+='<div class="rc-amount">'+(r.amount/1e8).toFixed(2)+'억</div>';
         bodyHtml+='<div class="rc-arrow">&#10132;</div>';
-        bodyHtml+='<div class="rc-box"><div class="rc-section">['+r.target_section+']</div><div class="rc-name">'+r.target+'</div><div class="rc-detail">예산 '+(r.target_budget/1e8).toFixed(1)+'억 | 예상집행율 <span class="rc-rate-change" style="color:var(--red)">'+r.target_fc_rate+'%</span> → <span class="rc-rate-change" style="color:var(--green)">'+r.target_new_rate+'%</span></div></div>';
+        bodyHtml+='<div class="rc-box"><div class="rc-name">'+r.target+'</div><div class="rc-detail">예산 '+(r.target_budget/1e8).toFixed(1)+'억 | 예상집행율 <span class="rc-rate-change" style="color:var(--red)">'+r.target_fc_rate+'%</span> → <span class="rc-rate-change" style="color:var(--green)">'+r.target_new_rate+'%</span></div></div>';
         bodyHtml+='<div class="rc-reason">'+r.reason+'</div>';
         bodyHtml+='</div>';
     });
@@ -2169,7 +2176,8 @@ def api_analyze():
         result['ai_analysis']['revenue']['burndown'] = _burndown_forecast(rev_comp, BUDGET_REVENUE)
         result['ai_analysis']['revenue']['whatif'] = _whatif_baseline(rev_comp, BUDGET_REVENUE)
         result['ai_analysis']['delay_risks'] = _delay_risk_scores(result.get('projects', []))
-        result['ai_analysis']['reallocation'] = _reallocation_recommendations(cap_comp, rev_comp)
+        result['ai_analysis']['capital']['reallocation'] = _reallocation_recommendations(cap_comp)
+        result['ai_analysis']['revenue']['reallocation'] = _reallocation_recommendations(rev_comp)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': f'분석 오류: {str(e)}'}), 500
@@ -2192,7 +2200,8 @@ def api_refresh():
         result['ai_analysis']['revenue']['burndown'] = _burndown_forecast(rev_comp, BUDGET_REVENUE)
         result['ai_analysis']['revenue']['whatif'] = _whatif_baseline(rev_comp, BUDGET_REVENUE)
         result['ai_analysis']['delay_risks'] = _delay_risk_scores(result.get('projects', []))
-        result['ai_analysis']['reallocation'] = _reallocation_recommendations(cap_comp, rev_comp)
+        result['ai_analysis']['capital']['reallocation'] = _reallocation_recommendations(cap_comp)
+        result['ai_analysis']['revenue']['reallocation'] = _reallocation_recommendations(rev_comp)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
