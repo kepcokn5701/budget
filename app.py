@@ -325,6 +325,206 @@ def _generate_report(cap_comp, rev_comp, cap_pred, rev_pred, cap_anomalies, rev_
 
 
 # ──────────────────────────────────────────────
+# 3-A2. 추가 AI 분석 함수
+# ──────────────────────────────────────────────
+def _burndown_forecast(comparison, budget_dict):
+    """월별 예산 소진 예측 곡선 데이터 생성"""
+    now = datetime.now()
+    month = now.month
+    total_budget = sum(r['배정예산'] for r in comparison)
+    total_exec = sum(r['집행실적'] for r in comparison)
+    total_progress = sum(r['진행중공사비'] for r in comparison)
+
+    actual_monthly = []
+    for m in range(1, 13):
+        if m <= month:
+            actual_monthly.append(round(total_exec * m / month) if month > 0 else 0)
+        else:
+            actual_monthly.append(None)
+
+    monthly_rate = total_exec / month if month > 0 else 0
+    projected_monthly = [round(monthly_rate * m) for m in range(1, 13)]
+
+    committed_total = total_exec + total_progress
+    committed_rate = committed_total / month if month > 0 else 0
+    committed_monthly = [round(committed_rate * m) for m in range(1, 13)]
+
+    budget_line = [round(total_budget)] * 12
+    even_monthly = [round(total_budget * m / 12) for m in range(1, 13)]
+
+    exhaustion_month = None
+    if monthly_rate > 0:
+        em = total_budget / monthly_rate
+        if em <= 12:
+            exhaustion_month = round(em, 1)
+
+    return {
+        'months': list(range(1, 13)),
+        'current_month': month,
+        'total_budget': total_budget,
+        'total_exec': total_exec,
+        'actual_monthly': actual_monthly,
+        'projected_monthly': projected_monthly,
+        'committed_monthly': committed_monthly,
+        'budget_line': budget_line,
+        'even_monthly': even_monthly,
+        'exhaustion_month': exhaustion_month,
+        'monthly_rate': monthly_rate,
+    }
+
+
+def _delay_risk_scores(projects):
+    """공사별 지연 리스크 점수 산출 (0-100)"""
+    now = datetime.now()
+    scored = []
+
+    for p in projects:
+        score = 0
+        factors = []
+        status = p.get('공사상태', '')
+
+        if '완료' in status:
+            scored.append({
+                '공사번호': p['공사번호'], '공사업체': p.get('공사업체', ''),
+                '공사상태': status, '착공일': p.get('착공일', ''), '준공일': p.get('준공일', ''),
+                'risk_score': 0, 'risk_level': 'low', 'factors': ['완료'],
+                '자본예산과목': p.get('자본예산과목', ''), '손익예산과목': p.get('손익예산과목', ''),
+                '설계_자본': p.get('설계_자본', 0), '기성_자본': p.get('기성_자본', 0),
+                '설계_손익': p.get('설계_손익', 0), '기성_손익': p.get('기성_손익', 0),
+            })
+            continue
+
+        if '중지' in status:
+            score += 30
+            factors.append('공사중지(+30)')
+        else:
+            start_str = p.get('착공일', '')
+            end_str = p.get('준공일', '') or p.get('현장시공완료일', '')
+            if start_str and end_str:
+                try:
+                    start_dt = datetime.strptime(start_str[:10], '%Y-%m-%d')
+                    end_dt = datetime.strptime(end_str[:10], '%Y-%m-%d')
+                    total_days = (end_dt - start_dt).days
+                    elapsed_days = (now - start_dt).days
+                    if total_days > 0:
+                        expected_progress = min(1.0, elapsed_days / total_days)
+                        total_design = p.get('설계_자본', 0) + p.get('설계_손익', 0)
+                        total_paid = p.get('기성_자본', 0) + p.get('기성_손익', 0)
+                        actual_progress = total_paid / total_design if total_design > 0 else 0
+                        gap = expected_progress - actual_progress
+                        if gap > 0.3:
+                            score += 40; factors.append(f'진행율격차({gap:.0%})(+40)')
+                        elif gap > 0.15:
+                            score += 25; factors.append(f'진행율격차({gap:.0%})(+25)')
+                        elif gap > 0:
+                            score += 10; factors.append(f'약간지연({gap:.0%})(+10)')
+                        if elapsed_days > total_days:
+                            overdue_pts = min(30, round((elapsed_days - total_days) / total_days * 60))
+                            score += overdue_pts; factors.append(f'기한초과(+{overdue_pts})')
+                except (ValueError, TypeError):
+                    pass
+            elif start_str and not end_str:
+                score += 10; factors.append('준공일미설정(+10)')
+
+        score = min(100, max(0, score))
+        risk_level = 'high' if score >= 60 else ('medium' if score >= 30 else 'low')
+        scored.append({
+            '공사번호': p['공사번호'], '공사업체': p.get('공사업체', ''),
+            '공사상태': status, '착공일': p.get('착공일', ''), '준공일': p.get('준공일', ''),
+            'risk_score': score, 'risk_level': risk_level, 'factors': factors,
+            '자본예산과목': p.get('자본예산과목', ''), '손익예산과목': p.get('손익예산과목', ''),
+            '설계_자본': p.get('설계_자본', 0), '기성_자본': p.get('기성_자본', 0),
+            '설계_손익': p.get('설계_손익', 0), '기성_손익': p.get('기성_손익', 0),
+        })
+
+    scored.sort(key=lambda x: x['risk_score'], reverse=True)
+    high_count = sum(1 for s in scored if s['risk_level'] == 'high')
+    med_count = sum(1 for s in scored if s['risk_level'] == 'medium')
+    avg_score = round(sum(s['risk_score'] for s in scored) / len(scored), 1) if scored else 0
+    return {
+        'items': scored[:30],
+        'total_projects': len(scored),
+        'high_risk': high_count, 'medium_risk': med_count, 'avg_score': avg_score,
+    }
+
+
+def _whatif_baseline(comparison, budget_dict):
+    """What-if 시뮬레이션 기준 데이터"""
+    now = datetime.now()
+    month = now.month
+    remaining = 12 - month
+    total_budget = sum(r['배정예산'] for r in comparison)
+    total_exec = sum(r['집행실적'] for r in comparison)
+    total_forecast = sum(r['예상집행'] for r in comparison)
+    monthly_rate = total_exec / month if month > 0 else 0
+    return {
+        'current_month': month, 'remaining_months': remaining,
+        'total_budget': total_budget, 'total_exec': total_exec,
+        'total_forecast': total_forecast, 'monthly_rate': monthly_rate,
+        'current_yearend_projected': round(monthly_rate * 12),
+        'current_yearend_rate': round(monthly_rate * 12 / total_budget * 100, 1) if total_budget else 0,
+        'target_60': total_budget * 0.6, 'target_90': total_budget * 0.9,
+        'exec_rate': round(total_exec / total_budget * 100, 1) if total_budget else 0,
+    }
+
+
+def _reallocation_recommendations(cap_comparison, rev_comparison):
+    """예산 재배분 추천: 잉여 항목 → 부족 항목 이전 제안"""
+    recommendations = []
+    for label, comparison in [('자본', cap_comparison), ('손익', rev_comparison)]:
+        surplus_items, deficit_items = [], []
+        for r in comparison:
+            budget = r['배정예산']
+            if budget <= 0:
+                continue
+            fc_rate = r['예상집행율']
+            remaining = budget - r['예상집행']
+            if fc_rate < 70 and remaining > 1_000_000:
+                surplus_items.append({
+                    '예산과목': r['예산과목'], '배정예산': budget,
+                    '예상집행': r['예상집행'], '예상집행율': fc_rate, '잉여액': remaining,
+                    'section': label,
+                })
+            if fc_rate > 90:
+                shortfall = r['예상집행'] - budget if r['예상집행'] > budget else 0
+                deficit_items.append({
+                    '예산과목': r['예산과목'], '배정예산': budget,
+                    '예상집행': r['예상집행'], '예상집행율': fc_rate, '부족액': shortfall,
+                    'section': label,
+                })
+        surplus_items.sort(key=lambda x: x['잉여액'], reverse=True)
+        deficit_items.sort(key=lambda x: x['예상집행율'], reverse=True)
+        for deficit in deficit_items:
+            if deficit['부족액'] <= 0:
+                continue
+            remaining_need = deficit['부족액']
+            for surplus in surplus_items:
+                if surplus['잉여액'] <= 0:
+                    continue
+                transfer = min(remaining_need, surplus['잉여액'] * 0.5)
+                if transfer < 500_000:
+                    continue
+                new_surplus_rate = round(surplus['예상집행'] / (surplus['배정예산'] - transfer) * 100, 1) if (surplus['배정예산'] - transfer) > 0 else 0
+                new_deficit_rate = round(deficit['예상집행'] / (deficit['배정예산'] + transfer) * 100, 1) if (deficit['배정예산'] + transfer) > 0 else 0
+                recommendations.append({
+                    'source': surplus['예산과목'], 'source_section': surplus['section'],
+                    'source_budget': surplus['배정예산'], 'source_fc_rate': surplus['예상집행율'],
+                    'source_new_rate': new_surplus_rate,
+                    'target': deficit['예산과목'], 'target_section': deficit['section'],
+                    'target_budget': deficit['배정예산'], 'target_fc_rate': deficit['예상집행율'],
+                    'target_new_rate': new_deficit_rate,
+                    'amount': round(transfer),
+                    'reason': f"{surplus['예산과목']} 잔액 {surplus['잉여액']/1e8:.1f}억 → {deficit['예산과목']} 부족분 {deficit['부족액']/1e8:.1f}억 이전",
+                })
+                remaining_need -= transfer
+                surplus['잉여액'] -= transfer
+                if remaining_need <= 0:
+                    break
+    total_surplus = sum(r['amount'] for r in recommendations)
+    return {'recommendations': recommendations[:10], 'total_transferable': total_surplus, 'count': len(recommendations)}
+
+
+# ──────────────────────────────────────────────
 # 3-B. 파싱 + 분석
 # ──────────────────────────────────────────────
 def parse_and_analyze(filepath):
@@ -638,6 +838,12 @@ def parse_and_analyze(filepath):
                                cap_pred, rev_pred,
                                cap_anomalies, rev_anomalies,
                                BUDGET_CAPITAL, BUDGET_REVENUE)
+    cap_burndown = _burndown_forecast(cap_comparison, BUDGET_CAPITAL)
+    rev_burndown = _burndown_forecast(rev_comparison, BUDGET_REVENUE)
+    cap_whatif = _whatif_baseline(cap_comparison, BUDGET_CAPITAL)
+    rev_whatif = _whatif_baseline(rev_comparison, BUDGET_REVENUE)
+    delay_risks = _delay_risk_scores(projects)
+    realloc = _reallocation_recommendations(cap_comparison, rev_comparison)
 
     return {
         'capital': {
@@ -657,14 +863,16 @@ def parse_and_analyze(filepath):
         'projects': projects[:500],
         'ai_analysis': {
             'capital': {
-                'predictions': cap_pred,
-                'anomalies': cap_anomalies,
+                'predictions': cap_pred, 'anomalies': cap_anomalies,
+                'burndown': cap_burndown, 'whatif': cap_whatif,
             },
             'revenue': {
-                'predictions': rev_pred,
-                'anomalies': rev_anomalies,
+                'predictions': rev_pred, 'anomalies': rev_anomalies,
+                'burndown': rev_burndown, 'whatif': rev_whatif,
             },
             'report': report,
+            'delay_risks': delay_risks,
+            'reallocation': realloc,
         },
     }
 
@@ -812,6 +1020,47 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 .ai-alert .ai-alert-title{font-weight:700;font-size:11px}
 .ai-alert .ai-alert-detail{font-size:10px;opacity:.8;margin-top:1px}
 
+/* ── Burndown Chart ── */
+.burndown-chart{margin:14px 0}
+.burndown-chart canvas{max-height:280px}
+.burn-warn{color:var(--red);font-weight:600}
+
+/* ── Delay Risk ── */
+.delay-risk-panel table{font-size:11px}
+.risk-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700}
+.risk-high{background:#FEE2E2;color:#991B1B}
+.risk-medium{background:#FEF3C7;color:#92400E}
+.risk-low{background:#D1FAE5;color:#065F46}
+.risk-score-bar{display:inline-block;width:60px;height:6px;background:#E2E8F0;border-radius:3px;overflow:hidden;vertical-align:middle;margin-right:4px}
+.risk-score-bar .rsf{display:block;height:100%;border-radius:3px}
+
+/* ── What-if Simulation ── */
+.whatif-panel{background:linear-gradient(135deg,#ECFDF5 0%,#D1FAE5 50%,#F0FDF4 100%) !important;border-color:#A7F3D0 !important}
+.whatif-panel::before{background:linear-gradient(180deg,#10B981,#059669) !important}
+.whatif-controls{display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:10px 14px;background:#fff;border-radius:8px;border:1px solid #A7F3D0}
+.whatif-controls label{font-size:11px;font-weight:700;color:#065F46;white-space:nowrap}
+.whatif-controls input[type=range]{flex:1;height:6px;-webkit-appearance:none;appearance:none;background:#D1FAE5;border-radius:3px;outline:none}
+.whatif-controls input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;background:#10B981;border-radius:50%;cursor:pointer;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+.whatif-pct-label{font-size:16px;font-weight:800;color:#065F46;min-width:45px;text-align:right}
+.whatif-chart-wrap{margin:12px 0}
+.whatif-message{padding:8px 12px;border-radius:6px;font-size:11px;margin-top:8px}
+.whatif-msg-ok{background:#D1FAE5;color:#065F46}
+.whatif-msg-warn{background:#FEF3C7;color:#92400E}
+.whatif-msg-danger{background:#FEE2E2;color:#991B1B}
+
+/* ── Reallocation ── */
+.realloc-panel{background:linear-gradient(135deg,#F5F3FF 0%,#EDE9FE 50%,#FDF4FF 100%) !important;border-color:#C4B5FD !important}
+.realloc-panel::before{background:linear-gradient(180deg,#7C3AED,#6D28D9) !important}
+.realloc-card{background:#fff;border-radius:8px;padding:12px 16px;border:1px solid #DDD6FE;margin-bottom:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.rc-arrow{font-size:20px;color:#7C3AED;font-weight:800;flex-shrink:0}
+.rc-box{flex:1;min-width:160px}
+.rc-name{font-size:11px;font-weight:700;color:var(--text)}
+.rc-section{font-size:9px;color:var(--text3);font-weight:600}
+.rc-detail{font-size:10px;color:var(--text2);margin-top:2px}
+.rc-rate-change{font-size:10px;font-weight:700}
+.rc-amount{background:#EDE9FE;color:#5B21B6;padding:6px 14px;border-radius:6px;font-size:13px;font-weight:800;white-space:nowrap;flex-shrink:0}
+.rc-reason{font-size:10px;color:var(--text3);width:100%;border-top:1px solid #EDE9FE;padding-top:6px;margin-top:4px}
+
 /* ── Report Modal ── */
 .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:9999;justify-content:center;align-items:center}
 .modal-overlay.on{display:flex}
@@ -914,6 +1163,31 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="ai-summary" id="capAiSummary"></div>
 <div class="ai-alerts" id="capAiAlerts"></div>
 </div>
+<!-- Burndown -->
+<div class="cbox burndown-chart" id="capBurndownPanel" style="display:none">
+<h3 style="display:flex;justify-content:space-between;align-items:center"><span>&#128200; 예산 소진 예측 곡선</span><span class="burndown-info" id="capBurndownInfo" style="font-size:10px;font-weight:400;color:var(--text3)"></span></h3>
+<canvas id="chCapBurndown" style="max-height:280px"></canvas>
+</div>
+<!-- Delay Risk -->
+<div class="ai-panel delay-risk-panel" id="capDelayRiskPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#EF4444,#F59E0B)">!</div> 공사 지연 리스크 분석</div>
+<div class="ai-summary" id="capDelayRiskSummary"></div>
+<div class="tb" style="margin:0;border:none;padding:0;box-shadow:none"><div class="sc" style="max-height:300px"><table id="tCapDelayRisk">
+<thead><tr><th>공사번호</th><th>공사업체</th><th>예산과목</th><th>공사상태</th><th>리스크점수</th><th>위험도</th><th>주요요인</th></tr></thead><tbody></tbody>
+</table></div></div>
+</div>
+<!-- What-if -->
+<div class="ai-panel whatif-panel" id="capWhatifPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#10B981,#059669)">&#9889;</div> What-if 시뮬레이션</div>
+<div class="whatif-controls">
+<label>집행 속도 조정</label>
+<input type="range" id="capWhatifSlider" min="50" max="150" value="100" step="5" oninput="updateWhatif('cap')">
+<span id="capWhatifPctLabel" class="whatif-pct-label">100%</span>
+</div>
+<div class="ai-summary" id="capWhatifSummary"></div>
+<div class="whatif-chart-wrap"><canvas id="chCapWhatif" style="max-height:200px"></canvas></div>
+<div id="capWhatifMessage" class="whatif-message"></div>
+</div>
 <div class="stabs">
 <button class="st on" onclick="subTab('cap',this,'capBudget')">예산현황</button>
 <button class="st" onclick="subTab('cap',this,'capProj')">공사목록</button>
@@ -962,6 +1236,31 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="ai-summary" id="revAiSummary"></div>
 <div class="ai-alerts" id="revAiAlerts"></div>
 </div>
+<!-- Burndown -->
+<div class="cbox burndown-chart" id="revBurndownPanel" style="display:none">
+<h3 style="display:flex;justify-content:space-between;align-items:center"><span>&#128200; 예산 소진 예측 곡선</span><span class="burndown-info" id="revBurndownInfo" style="font-size:10px;font-weight:400;color:var(--text3)"></span></h3>
+<canvas id="chRevBurndown" style="max-height:280px"></canvas>
+</div>
+<!-- Delay Risk -->
+<div class="ai-panel delay-risk-panel" id="revDelayRiskPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#EF4444,#F59E0B)">!</div> 공사 지연 리스크 분석</div>
+<div class="ai-summary" id="revDelayRiskSummary"></div>
+<div class="tb" style="margin:0;border:none;padding:0;box-shadow:none"><div class="sc" style="max-height:300px"><table id="tRevDelayRisk">
+<thead><tr><th>공사번호</th><th>공사업체</th><th>예산과목</th><th>공사상태</th><th>리스크점수</th><th>위험도</th><th>주요요인</th></tr></thead><tbody></tbody>
+</table></div></div>
+</div>
+<!-- What-if -->
+<div class="ai-panel whatif-panel" id="revWhatifPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#10B981,#059669)">&#9889;</div> What-if 시뮬레이션</div>
+<div class="whatif-controls">
+<label>집행 속도 조정</label>
+<input type="range" id="revWhatifSlider" min="50" max="150" value="100" step="5" oninput="updateWhatif('rev')">
+<span id="revWhatifPctLabel" class="whatif-pct-label">100%</span>
+</div>
+<div class="ai-summary" id="revWhatifSummary"></div>
+<div class="whatif-chart-wrap"><canvas id="chRevWhatif" style="max-height:200px"></canvas></div>
+<div id="revWhatifMessage" class="whatif-message"></div>
+</div>
 <div class="stabs">
 <button class="st on" onclick="subTab('rev',this,'revBudget')">예산현황</button>
 <button class="st" onclick="subTab('rev',this,'revProj')">공사목록</button>
@@ -994,6 +1293,12 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="tb"><h3>공사목록 (손익)</h3><div class="sc"><table id="tRevProj"><thead><tr><th>No</th><th>공사번호</th><th>손익예산과목</th><th>공사업체</th><th>공사상태</th><th>착공일</th><th>현장시공<br>완료일</th><th>준공일</th><th>설계(손익)</th><th>기성(손익)</th><th>예정(손익)</th><th>기성율</th></tr></thead><tbody></tbody></table></div></div>
 </div>
 </div>
+</div>
+<!-- Reallocation Panel (global) -->
+<div class="ai-panel realloc-panel" id="reallocPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#7C3AED,#6D28D9)">&#8644;</div> 예산 재배분 추천</div>
+<div class="ai-summary" id="reallocSummary"></div>
+<div id="reallocBody"></div>
 </div>
 </div><!-- /dashboardContent -->
 
@@ -1108,7 +1413,7 @@ function clr(v){return v<0?'neg':'pos'}
 function niceMax(v){if(v<=0)return 100;const t=v*1.15;if(t<=100)return Math.ceil(t/50)*50;return Math.ceil(t/200)*200}
 function _ch(id,type,data,opts={}){if(CH[id])CH[id].destroy();CH[id]=new Chart(document.getElementById(id),{type,data,options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:11}}}},...opts}})}
 
-function renderAll(){if(!D)return;renderCapital();renderRevenue();renderProjects();renderAI();renderEarlyExec()}
+function renderAll(){if(!D)return;renderCapital();renderRevenue();renderProjects();renderAI();renderEarlyExec();renderBurndown();renderDelayRisk();renderWhatif();renderReallocation()}
 
 // ═══════════════════════════════════════
 // 투자비 조기집행 분석
@@ -1259,6 +1564,201 @@ function copyReport(){
 document.getElementById('reportModal').addEventListener('click',function(e){if(e.target===this)closeReport()});
 
 // ═══════════════════════════════════════
+// Feature 1: 예산 소진 예측 곡선
+// ═══════════════════════════════════════
+function renderBurndown(){
+    if(!D||!D.ai_analysis)return;
+    _renderBurndownChart('cap','capital');
+    _renderBurndownChart('rev','revenue');
+}
+function _renderBurndownChart(prefix,dataKey){
+    const ai=D.ai_analysis[dataKey];
+    if(!ai||!ai.burndown)return;
+    const bd=ai.burndown;
+    const panel=document.getElementById(prefix+'BurndownPanel');
+    const infoEl=document.getElementById(prefix+'BurndownInfo');
+    if(bd.total_budget<=0){panel.style.display='none';return}
+    panel.style.display='block';
+    let info='현재 '+bd.current_month+'월 / 월평균 집행 '+(bd.monthly_rate/1e8).toFixed(2)+'억';
+    if(bd.exhaustion_month&&bd.exhaustion_month<=12){
+        info+=' | <span class="burn-warn">예산소진 예상: '+Math.round(bd.exhaustion_month)+'월</span>';
+    }
+    infoEl.innerHTML=info;
+    const actualData=bd.actual_monthly.map(v=>v===null?null:+(v/1e8).toFixed(2));
+    const projData=bd.projected_monthly.map(v=>+(v/1e8).toFixed(2));
+    const commitData=bd.committed_monthly.map(v=>+(v/1e8).toFixed(2));
+    const budgetData=bd.budget_line.map(v=>+(v/1e8).toFixed(2));
+    const evenData=bd.even_monthly.map(v=>+(v/1e8).toFixed(2));
+    const labels=bd.months.map(m=>m+'월');
+    const cid=prefix==='cap'?'chCapBurndown':'chRevBurndown';
+    _ch(cid,'line',{labels:labels,datasets:[
+        {label:'배정예산',data:budgetData,borderColor:'rgba(59,130,246,0.6)',borderWidth:2,borderDash:[8,4],pointRadius:0,fill:false},
+        {label:'균등배분',data:evenData,borderColor:'rgba(148,163,184,0.5)',borderWidth:1,borderDash:[4,4],pointRadius:0,fill:false},
+        {label:'실제 집행',data:actualData,borderColor:'rgba(239,68,68,1)',borderWidth:2.5,pointRadius:3,pointBackgroundColor:'rgba(239,68,68,1)',fill:false,spanGaps:false},
+        {label:'예측(현재페이스)',data:projData,borderColor:'rgba(239,68,68,0.4)',borderWidth:2,borderDash:[6,3],pointRadius:0,fill:false},
+        {label:'예측(약정포함)',data:commitData,borderColor:'rgba(251,191,36,0.8)',borderWidth:2,borderDash:[6,3],pointRadius:0,fill:false}
+    ]},{scales:{y:{beginAtZero:true,title:{display:true,text:'억원'},ticks:{font:{size:10}}},x:{ticks:{font:{size:10}}}},
+        plugins:{legend:{position:'bottom',labels:{font:{size:10},usePointStyle:true}}}});
+}
+
+// ═══════════════════════════════════════
+// Feature 2: 공사 지연 리스크
+// ═══════════════════════════════════════
+function renderDelayRisk(){
+    if(!D||!D.ai_analysis||!D.ai_analysis.delay_risks)return;
+    _renderDelayRiskPanel('cap','자본예산과목');
+    _renderDelayRiskPanel('rev','손익예산과목');
+}
+function _renderDelayRiskPanel(prefix,catKey){
+    const dr=D.ai_analysis.delay_risks;
+    if(!dr||!dr.items||dr.items.length===0)return;
+    const panel=document.getElementById(prefix+'DelayRiskPanel');
+    const summaryEl=document.getElementById(prefix+'DelayRiskSummary');
+    const tId=prefix==='cap'?'tCapDelayRisk':'tRevDelayRisk';
+    const tb=document.querySelector('#'+tId+' tbody');
+    const items=dr.items.filter(r=>prefix==='cap'?r['설계_자본']>0:r['설계_손익']>0);
+    if(items.length===0){panel.style.display='none';return}
+    panel.style.display='block';
+    const tabHigh=items.filter(r=>r.risk_level==='high').length;
+    const tabMed=items.filter(r=>r.risk_level==='medium').length;
+    const tabAvg=items.length>0?Math.round(items.reduce((s,r)=>s+r.risk_score,0)/items.length):0;
+    let html='';
+    html+='<div class="ai-stat"><div class="ai-label">평균 리스크</div><div class="ai-value" style="color:'+(tabAvg>=60?'var(--red)':tabAvg>=30?'#F59E0B':'var(--green)')+'">'+tabAvg+'점</div><div class="ai-sub">0(안전)~100(위험)</div></div>';
+    html+='<div class="ai-stat"><div class="ai-label">고위험</div><div class="ai-value" style="color:var(--red)">'+tabHigh+'건</div><div class="ai-sub">점수 60+</div></div>';
+    html+='<div class="ai-stat"><div class="ai-label">중위험</div><div class="ai-value" style="color:#F59E0B">'+tabMed+'건</div><div class="ai-sub">점수 30~59</div></div>';
+    html+='<div class="ai-stat"><div class="ai-label">분석 대상</div><div class="ai-value">'+items.length+'건</div><div class="ai-sub">전체 '+dr.total_projects+'건</div></div>';
+    summaryEl.innerHTML=html;
+    tb.innerHTML='';
+    items.filter(r=>r.risk_score>0).slice(0,15).forEach(r=>{
+        const barColor=r.risk_level==='high'?'var(--red)':r.risk_level==='medium'?'#F59E0B':'var(--green)';
+        const badgeCls='risk-'+r.risk_level;
+        const badgeText=r.risk_level==='high'?'고위험':r.risk_level==='medium'?'중위험':'저위험';
+        const tr=document.createElement('tr');
+        tr.innerHTML='<td>'+r['공사번호']+'</td><td>'+r['공사업체']+'</td><td>'+(r[catKey]||'')+'</td><td>'+stBg(r['공사상태'])+'</td>'
+            +'<td><div class="risk-score-bar"><div class="rsf" style="width:'+r.risk_score+'%;background:'+barColor+'"></div></div>'+r.risk_score+'</td>'
+            +'<td><span class="risk-badge '+badgeCls+'">'+badgeText+'</span></td>'
+            +'<td style="font-size:10px;color:var(--text3)">'+r.factors.join(', ')+'</td>';
+        tb.appendChild(tr);
+    });
+}
+
+// ═══════════════════════════════════════
+// Feature 3: What-if 시뮬레이션
+// ═══════════════════════════════════════
+function renderWhatif(){
+    if(!D||!D.ai_analysis)return;
+    _initWhatif('cap','capital');
+    _initWhatif('rev','revenue');
+}
+function _initWhatif(prefix,dataKey){
+    const ai=D.ai_analysis[dataKey];
+    if(!ai||!ai.whatif)return;
+    if(ai.whatif.total_budget<=0){document.getElementById(prefix+'WhatifPanel').style.display='none';return}
+    document.getElementById(prefix+'WhatifPanel').style.display='block';
+    document.getElementById(prefix+'WhatifSlider').value=100;
+    document.getElementById(prefix+'WhatifPctLabel').textContent='100%';
+    updateWhatif(prefix);
+}
+function updateWhatif(prefix){
+    const dataKey=prefix==='cap'?'capital':'revenue';
+    const ai=D.ai_analysis[dataKey];
+    if(!ai||!ai.whatif)return;
+    const wi=ai.whatif;
+    const slider=document.getElementById(prefix+'WhatifSlider');
+    const pctLabel=document.getElementById(prefix+'WhatifPctLabel');
+    const summaryEl=document.getElementById(prefix+'WhatifSummary');
+    const msgEl=document.getElementById(prefix+'WhatifMessage');
+    const factor=parseInt(slider.value)/100;
+    pctLabel.textContent=slider.value+'%';
+    const adjustedRate=wi.monthly_rate*factor;
+    const remainExec=adjustedRate*wi.remaining_months;
+    const projYE=wi.total_exec+remainExec;
+    const projRate=wi.total_budget>0?+(projYE/wi.total_budget*100).toFixed(1):0;
+    const need90=(wi.target_90-wi.total_exec)/Math.max(1,wi.remaining_months);
+    const need100=(wi.total_budget-wi.total_exec)/Math.max(1,wi.remaining_months);
+    let html='';
+    html+='<div class="ai-stat"><div class="ai-label">조정 월집행액</div><div class="ai-value">'+(adjustedRate/1e8).toFixed(2)+'억</div><div class="ai-sub">기존 '+(wi.monthly_rate/1e8).toFixed(2)+'억 x '+slider.value+'%</div></div>';
+    html+='<div class="ai-stat"><div class="ai-label">예상 연말 집행</div><div class="ai-value" style="color:'+(projRate>100?'var(--red)':projRate>90?'var(--green)':'#F59E0B')+'">'+(projYE/1e8).toFixed(1)+'억</div><div class="ai-sub">예상집행율 '+projRate+'%</div></div>';
+    html+='<div class="ai-stat"><div class="ai-label">90% 달성 필요</div><div class="ai-value">'+(wi.remaining_months>0?(need90/1e8).toFixed(2)+'억/월':'-')+'</div><div class="ai-sub">'+wi.remaining_months+'개월 남음</div></div>';
+    html+='<div class="ai-stat"><div class="ai-label">100% 달성 필요</div><div class="ai-value">'+(wi.remaining_months>0?(need100/1e8).toFixed(2)+'억/월':'-')+'</div><div class="ai-sub">배정예산 완전소진</div></div>';
+    summaryEl.innerHTML=html;
+    // 미니 차트
+    const lb=[];const curL=[];const adjL=[];const bL=[];
+    for(let m=1;m<=12;m++){
+        lb.push(m+'월');
+        if(m<=wi.current_month){
+            const v=+(wi.total_exec*m/wi.current_month/1e8).toFixed(2);
+            curL.push(v);adjL.push(v);
+        }else{
+            curL.push(+((wi.total_exec+wi.monthly_rate*(m-wi.current_month))/1e8).toFixed(2));
+            adjL.push(+((wi.total_exec+adjustedRate*(m-wi.current_month))/1e8).toFixed(2));
+        }
+        bL.push(+(wi.total_budget/1e8).toFixed(2));
+    }
+    const cid=prefix==='cap'?'chCapWhatif':'chRevWhatif';
+    _ch(cid,'line',{labels:lb,datasets:[
+        {label:'배정예산',data:bL,borderColor:'rgba(59,130,246,0.5)',borderDash:[6,3],borderWidth:1.5,pointRadius:0,fill:false},
+        {label:'현재페이스',data:curL,borderColor:'rgba(148,163,184,0.6)',borderWidth:1.5,borderDash:[4,2],pointRadius:0,fill:false},
+        {label:'조정 후',data:adjL,borderColor:'rgba(16,185,129,1)',borderWidth:2.5,pointRadius:2,pointBackgroundColor:'rgba(16,185,129,1)',fill:false}
+    ]},{animation:{duration:0},scales:{y:{beginAtZero:true,title:{display:true,text:'억원'},ticks:{font:{size:9}}},x:{ticks:{font:{size:9}}}},
+        plugins:{legend:{position:'bottom',labels:{font:{size:9},usePointStyle:true}}}});
+    // 메시지
+    let msg='';let msgCls='';
+    if(projRate>=95&&projRate<=105){msg='현재 속도의 '+slider.value+'%로 집행 시, 연말 집행율 '+projRate+'% 예상. 적정 수준입니다.';msgCls='whatif-msg-ok';}
+    else if(projRate>105){msg='예산 초과 위험! 연말 '+projRate+'% 집행 예상. 속도를 줄여야 합니다.';msgCls='whatif-msg-danger';}
+    else if(projRate>=80){msg='연말 집행율 '+projRate+'% 예상. 목표 달성을 위해 속도 조정을 검토하세요.';msgCls='whatif-msg-warn';}
+    else{msg='연말 집행율 '+projRate+'% 예상. 집행 부진 우려. 하반기 집중 집행이 필요합니다.';msgCls='whatif-msg-danger';}
+    if(prefix==='cap'){
+        const earlyPct=parseInt(document.getElementById('capTargetPct').value)||60;
+        const earlyMonth=parseInt(document.getElementById('capTargetMonth').value)||6;
+        const earlyTarget=wi.total_budget*earlyPct/100;
+        if(wi.total_exec<earlyTarget&&wi.current_month<=earlyMonth){
+            const mToT=earlyMonth-wi.current_month;
+            const needPM=(earlyTarget-wi.total_exec)/Math.max(1,mToT);
+            msg+=adjustedRate>=needPM?' | 조기집행 '+earlyPct+'% 달성 가능':' | 조기집행 '+earlyPct+'% 미달 예상 (월 '+(needPM/1e8).toFixed(2)+'억 필요)';
+        }
+    }
+    msgEl.className='whatif-message '+msgCls;
+    msgEl.innerHTML=msg;
+}
+
+// ═══════════════════════════════════════
+// Feature 6: 예산 재배분 추천
+// ═══════════════════════════════════════
+function renderReallocation(){
+    if(!D||!D.ai_analysis||!D.ai_analysis.reallocation)return;
+    const ra=D.ai_analysis.reallocation;
+    const panel=document.getElementById('reallocPanel');
+    const summaryEl=document.getElementById('reallocSummary');
+    const bodyEl=document.getElementById('reallocBody');
+    if(!ra.recommendations||ra.recommendations.length===0){
+        const hasBudget=D.capital.budget_comparison.some(r=>r['배정예산']>0)||D.revenue.budget_comparison.some(r=>r['배정예산']>0);
+        if(!hasBudget){panel.style.display='none';return}
+        panel.style.display='block';
+        summaryEl.innerHTML='<div class="ai-stat" style="grid-column:1/-1"><div class="ai-label">분석 결과</div><div class="ai-value" style="color:var(--green)">재배분 불필요</div><div class="ai-sub">모든 항목이 적정 범위 내에서 집행 중입니다</div></div>';
+        bodyEl.innerHTML='';
+        return;
+    }
+    panel.style.display='block';
+    let html='';
+    html+='<div class="ai-stat"><div class="ai-label">재배분 추천</div><div class="ai-value">'+ra.count+'건</div><div class="ai-sub">잉여 → 부족 이전</div></div>';
+    html+='<div class="ai-stat"><div class="ai-label">이전 가능 총액</div><div class="ai-value">'+(ra.total_transferable/1e8).toFixed(1)+'억</div><div class="ai-sub">추천 이전 합계</div></div>';
+    summaryEl.innerHTML=html;
+    let bodyHtml='';
+    ra.recommendations.forEach(r=>{
+        bodyHtml+='<div class="realloc-card">';
+        bodyHtml+='<div class="rc-box"><div class="rc-section">['+r.source_section+']</div><div class="rc-name">'+r.source+'</div><div class="rc-detail">예산 '+(r.source_budget/1e8).toFixed(1)+'억 | 예상집행율 <span class="rc-rate-change" style="color:var(--green)">'+r.source_fc_rate+'%</span></div></div>';
+        bodyHtml+='<div class="rc-arrow">&#10132;</div>';
+        bodyHtml+='<div class="rc-amount">'+(r.amount/1e8).toFixed(2)+'억</div>';
+        bodyHtml+='<div class="rc-arrow">&#10132;</div>';
+        bodyHtml+='<div class="rc-box"><div class="rc-section">['+r.target_section+']</div><div class="rc-name">'+r.target+'</div><div class="rc-detail">예산 '+(r.target_budget/1e8).toFixed(1)+'억 | 예상집행율 <span class="rc-rate-change" style="color:var(--red)">'+r.target_fc_rate+'%</span> → <span class="rc-rate-change" style="color:var(--green)">'+r.target_new_rate+'%</span></div></div>';
+        bodyHtml+='<div class="rc-reason">'+r.reason+'</div>';
+        bodyHtml+='</div>';
+    });
+    bodyEl.innerHTML=bodyHtml;
+}
+
+// ═══════════════════════════════════════
 // 차트 렌더 (분리)
 // ═══════════════════════════════════════
 function _renderBarChart(chartId,comp){
@@ -1374,8 +1874,8 @@ function saveBudgets(sec){
     });
     updateTotals(sec);
     updateSummaryCards(sec);
-    if(sec==='cap'){renderEarlyExec();renderCapitalChart()}
-    else{renderRevenueChart()}
+    if(sec==='cap'){renderEarlyExec();renderCapitalChart();renderBurndown();renderWhatif();renderReallocation()}
+    else{renderRevenueChart();renderBurndown();renderWhatif();renderReallocation()}
     // 서버에 저장 (기본항목 금액 + 사용자추가 항목 전체)
     const saveData={capital:{budgets:{},custom_items:[]},revenue:{budgets:{},custom_items:[]}};
     ['capital','revenue'].forEach(k=>{
