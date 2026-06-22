@@ -1007,18 +1007,8 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 .ai-alert .ai-alert-detail{font-size:10px;opacity:.8;margin-top:1px}
 
 /* ── Burndown Chart ── */
-.burndown-chart{margin:14px 0}
-.burndown-chart canvas{max-height:280px}
 .burn-warn{color:var(--red);font-weight:600}
 
-/* ── Delay Risk ── */
-.delay-risk-panel table{font-size:11px}
-.risk-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700}
-.risk-high{background:#FEE2E2;color:#991B1B}
-.risk-medium{background:#FEF3C7;color:#92400E}
-.risk-low{background:#D1FAE5;color:#065F46}
-.risk-score-bar{display:inline-block;width:60px;height:6px;background:#E2E8F0;border-radius:3px;overflow:hidden;vertical-align:middle;margin-right:4px}
-.risk-score-bar .rsf{display:block;height:100%;border-radius:3px}
 
 /* ── What-if Simulation ── */
 .whatif-panel{background:linear-gradient(135deg,#ECFDF5 0%,#D1FAE5 50%,#F0FDF4 100%) !important;border-color:#A7F3D0 !important}
@@ -1037,14 +1027,18 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 /* ── Reallocation ── */
 .realloc-panel{background:linear-gradient(135deg,#F5F3FF 0%,#EDE9FE 50%,#FDF4FF 100%) !important;border-color:#C4B5FD !important}
 .realloc-panel::before{background:linear-gradient(180deg,#7C3AED,#6D28D9) !important}
-.realloc-card{background:#fff;border-radius:8px;padding:12px 16px;border:1px solid #DDD6FE;margin-bottom:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.rc-arrow{font-size:20px;color:#7C3AED;font-weight:800;flex-shrink:0}
-.rc-box{flex:1;min-width:160px}
+.realloc-details{background:#fff;border-radius:8px;border:1px solid #DDD6FE;margin-bottom:8px;overflow:hidden}
+.realloc-details summary{display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;list-style:none;user-select:none}
+.realloc-details summary::-webkit-details-marker{display:none}
+.realloc-toggle{width:18px;height:18px;background:#EDE9FE;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#7C3AED;flex-shrink:0;transition:transform .2s}
+.realloc-details[open] .realloc-toggle{transform:rotate(90deg)}
+.realloc-details-body{padding:10px 16px 14px;border-top:1px solid #EDE9FE;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.rc-arrow{font-size:18px;color:#7C3AED;font-weight:800;flex-shrink:0}
+.rc-box{flex:1;min-width:140px}
 .rc-name{font-size:11px;font-weight:700;color:var(--text)}
-.rc-section{font-size:9px;color:var(--text3);font-weight:600}
 .rc-detail{font-size:10px;color:var(--text2);margin-top:2px}
 .rc-rate-change{font-size:10px;font-weight:700}
-.rc-amount{background:#EDE9FE;color:#5B21B6;padding:6px 14px;border-radius:6px;font-size:13px;font-weight:800;white-space:nowrap;flex-shrink:0}
+.rc-amount{background:#EDE9FE;color:#5B21B6;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:800;white-space:nowrap;flex-shrink:0}
 .rc-reason{font-size:10px;color:var(--text3);width:100%;border-top:1px solid #EDE9FE;padding-top:6px;margin-top:4px}
 
 /* ── Report Modal ── */
@@ -1144,41 +1138,6 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </div>
 <div id="capEarlyBody"></div>
 </div>
-<div class="ai-panel" id="capAiPanel" style="display:none">
-<div class="ai-header"><div class="ai-icon">AI</div> AI 예산 분석</div>
-<div class="ai-summary" id="capAiSummary"></div>
-<div class="ai-alerts" id="capAiAlerts"></div>
-</div>
-<!-- Burndown -->
-<div class="cbox burndown-chart" id="capBurndownPanel" style="display:none">
-<h3 style="display:flex;justify-content:space-between;align-items:center"><span>&#128200; 예산 소진 예측 곡선</span><span class="burndown-info" id="capBurndownInfo" style="font-size:10px;font-weight:400;color:var(--text3)"></span></h3>
-<canvas id="chCapBurndown" style="max-height:280px"></canvas>
-</div>
-<!-- Delay Risk -->
-<div class="ai-panel delay-risk-panel" id="capDelayRiskPanel" style="display:none">
-<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#EF4444,#F59E0B)">!</div> 공사 지연 리스크 분석</div>
-<div class="ai-summary" id="capDelayRiskSummary"></div>
-<div class="tb" style="margin:0;border:none;padding:0;box-shadow:none"><div class="sc" style="max-height:300px"><table id="tCapDelayRisk">
-<thead><tr><th>공사번호</th><th>공사업체</th><th>예산과목</th><th>공사상태</th><th>리스크점수</th><th>위험도</th><th>주요요인</th></tr></thead><tbody></tbody>
-</table></div></div>
-</div>
-<!-- What-if -->
-<div class="ai-panel whatif-panel" id="capWhatifPanel" style="display:none">
-<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#10B981,#059669)">&#9889;</div> What-if 시뮬레이션</div>
-<div class="whatif-controls">
-<label>집행 속도 조정</label>
-<input type="range" id="capWhatifSlider" min="50" max="150" value="100" step="5" oninput="updateWhatif('cap')">
-<span id="capWhatifPctLabel" class="whatif-pct-label">100%</span>
-</div>
-<div class="ai-summary" id="capWhatifSummary"></div>
-<div class="whatif-chart-wrap"><canvas id="chCapWhatif" style="max-height:200px"></canvas></div>
-<div id="capWhatifMessage" class="whatif-message"></div>
-</div>
-<div class="ai-panel realloc-panel" id="capReallocPanel" style="display:none">
-<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#7C3AED,#6D28D9)">&#8644;</div> 예산 재배분 추천 (자본)</div>
-<div class="ai-summary" id="capReallocSummary"></div>
-<div id="capReallocBody"></div>
-</div>
 <div class="stabs">
 <button class="st on" onclick="subTab('cap',this,'capBudget')">예산현황</button>
 <button class="st" onclick="subTab('cap',this,'capProj')">공사목록</button>
@@ -1210,6 +1169,29 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="sf"><input type="text" id="capSrch" placeholder="공사번호/업체명/과목 검색..."><select id="capFilt"><option value="">전체</option><option value="공사완료">완료</option><option value="공사중">진행</option><option value="공사중지">중지</option></select></div>
 <div class="tb"><h3>공사목록 (자본)</h3><div class="sc"><table id="tCapProj"><thead><tr><th>No</th><th>공사번호</th><th>자본예산과목</th><th>공사업체</th><th>공사상태</th><th>착공일</th><th>현장시공<br>완료일</th><th>준공일</th><th>설계(자본)</th><th>기성(자본)</th><th>예정(자본)</th><th>기성율</th></tr></thead><tbody></tbody></table></div></div>
 </div>
+<div class="ai-panel" id="capAiPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon">AI</div> AI 예산 분석</div>
+<div class="ai-summary" id="capAiSummary"></div>
+<div class="ai-alerts" id="capAiAlerts"></div>
+</div>
+<!-- Delay Risk -->
+<!-- What-if -->
+<div class="ai-panel whatif-panel" id="capWhatifPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#10B981,#059669)">&#9889;</div> What-if 시뮬레이션</div>
+<div class="whatif-controls">
+<label>집행 속도 조정</label>
+<input type="range" id="capWhatifSlider" min="50" max="150" value="100" step="5" oninput="updateWhatif('cap')">
+<span id="capWhatifPctLabel" class="whatif-pct-label">100%</span>
+</div>
+<div class="ai-summary" id="capWhatifSummary"></div>
+<div class="whatif-chart-wrap"><canvas id="chCapWhatif" style="max-height:200px"></canvas></div>
+<div id="capWhatifMessage" class="whatif-message"></div>
+</div>
+<div class="ai-panel realloc-panel" id="capReallocPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#7C3AED,#6D28D9)">&#8644;</div> 예산 재배분 추천 (자본)</div>
+<div class="ai-summary" id="capReallocSummary"></div>
+<div id="capReallocBody"></div>
+</div>
 </div>
 
 <!-- ═══ 손익 ═══ -->
@@ -1221,41 +1203,6 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="cd c3"><div class="lb">진행중공사비 (F)</div><div class="vl" id="revF">-</div><div class="sb">미준공 금액</div></div>
 <div class="cd c5"><div class="lb">최종예상 (G=D+F)</div><div class="vl" id="revG">-</div><div class="sb" id="revGR">예상집행율 -</div></div>
 <div class="cd c6"><div class="lb">공사건수</div><div class="vl" id="revCnt">-</div><div class="sb">&nbsp;</div></div>
-</div>
-<div class="ai-panel" id="revAiPanel" style="display:none">
-<div class="ai-header"><div class="ai-icon">AI</div> AI 예산 분석</div>
-<div class="ai-summary" id="revAiSummary"></div>
-<div class="ai-alerts" id="revAiAlerts"></div>
-</div>
-<!-- Burndown -->
-<div class="cbox burndown-chart" id="revBurndownPanel" style="display:none">
-<h3 style="display:flex;justify-content:space-between;align-items:center"><span>&#128200; 예산 소진 예측 곡선</span><span class="burndown-info" id="revBurndownInfo" style="font-size:10px;font-weight:400;color:var(--text3)"></span></h3>
-<canvas id="chRevBurndown" style="max-height:280px"></canvas>
-</div>
-<!-- Delay Risk -->
-<div class="ai-panel delay-risk-panel" id="revDelayRiskPanel" style="display:none">
-<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#EF4444,#F59E0B)">!</div> 공사 지연 리스크 분석</div>
-<div class="ai-summary" id="revDelayRiskSummary"></div>
-<div class="tb" style="margin:0;border:none;padding:0;box-shadow:none"><div class="sc" style="max-height:300px"><table id="tRevDelayRisk">
-<thead><tr><th>공사번호</th><th>공사업체</th><th>예산과목</th><th>공사상태</th><th>리스크점수</th><th>위험도</th><th>주요요인</th></tr></thead><tbody></tbody>
-</table></div></div>
-</div>
-<!-- What-if -->
-<div class="ai-panel whatif-panel" id="revWhatifPanel" style="display:none">
-<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#10B981,#059669)">&#9889;</div> What-if 시뮬레이션</div>
-<div class="whatif-controls">
-<label>집행 속도 조정</label>
-<input type="range" id="revWhatifSlider" min="50" max="150" value="100" step="5" oninput="updateWhatif('rev')">
-<span id="revWhatifPctLabel" class="whatif-pct-label">100%</span>
-</div>
-<div class="ai-summary" id="revWhatifSummary"></div>
-<div class="whatif-chart-wrap"><canvas id="chRevWhatif" style="max-height:200px"></canvas></div>
-<div id="revWhatifMessage" class="whatif-message"></div>
-</div>
-<div class="ai-panel realloc-panel" id="revReallocPanel" style="display:none">
-<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#7C3AED,#6D28D9)">&#8644;</div> 예산 재배분 추천 (손익)</div>
-<div class="ai-summary" id="revReallocSummary"></div>
-<div id="revReallocBody"></div>
 </div>
 <div class="stabs">
 <button class="st on" onclick="subTab('rev',this,'revBudget')">예산현황</button>
@@ -1288,6 +1235,28 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="sf"><input type="text" id="revSrch" placeholder="공사번호/업체명/과목 검색..."><select id="revFilt"><option value="">전체</option><option value="공사완료">완료</option><option value="공사중">진행</option><option value="공사중지">중지</option></select></div>
 <div class="tb"><h3>공사목록 (손익)</h3><div class="sc"><table id="tRevProj"><thead><tr><th>No</th><th>공사번호</th><th>손익예산과목</th><th>공사업체</th><th>공사상태</th><th>착공일</th><th>현장시공<br>완료일</th><th>준공일</th><th>설계(손익)</th><th>기성(손익)</th><th>예정(손익)</th><th>기성율</th></tr></thead><tbody></tbody></table></div></div>
 </div>
+<div class="ai-panel" id="revAiPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon">AI</div> AI 예산 분석</div>
+<div class="ai-summary" id="revAiSummary"></div>
+<div class="ai-alerts" id="revAiAlerts"></div>
+</div>
+<!-- Delay Risk -->
+<!-- What-if -->
+<div class="ai-panel whatif-panel" id="revWhatifPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#10B981,#059669)">&#9889;</div> What-if 시뮬레이션</div>
+<div class="whatif-controls">
+<label>집행 속도 조정</label>
+<input type="range" id="revWhatifSlider" min="50" max="150" value="100" step="5" oninput="updateWhatif('rev')">
+<span id="revWhatifPctLabel" class="whatif-pct-label">100%</span>
+</div>
+<div class="ai-summary" id="revWhatifSummary"></div>
+<div class="whatif-chart-wrap"><canvas id="chRevWhatif" style="max-height:200px"></canvas></div>
+<div id="revWhatifMessage" class="whatif-message"></div>
+</div>
+<div class="ai-panel realloc-panel" id="revReallocPanel" style="display:none">
+<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#7C3AED,#6D28D9)">&#8644;</div> 예산 재배분 추천 (손익)</div>
+<div class="ai-summary" id="revReallocSummary"></div>
+<div id="revReallocBody"></div>
 </div>
 </div>
 </div><!-- /dashboardContent -->
@@ -1360,36 +1329,17 @@ document.getElementById('fi').addEventListener('change',async e=>{
 });
 
 async function doRefresh(){
-    document.getElementById('loadingState').style.display='flex';
-    document.getElementById('dashboardContent').style.display='none';
-    // 배정예산 보존
-    const savedBudgets={};
-    if(D){
-        ['capital','revenue'].forEach(dk=>{
-            savedBudgets[dk]={};
-            D[dk].budget_comparison.forEach(r=>{
-                if(r['배정예산']>0) savedBudgets[dk][r['예산과목']]=r['배정예산'];
-            });
+    // 업로드 데이터 초기화 - 배정예산은 유지
+    try{await fetch('/api/reset');}catch(e){}
+    document.getElementById('refreshBtn').style.display='none';
+    document.getElementById('reportBtn').style.display='none';
+    document.getElementById('fn').textContent='';
+    ['cap','rev'].forEach(p=>{
+        ['AiPanel','WhatifPanel','ReallocPanel'].forEach(s=>{
+            const el=document.getElementById(p+s);if(el)el.style.display='none';
         });
-    }
-    try{const r=await fetch('/api/refresh');const j=await r.json();if(j.error){alert(j.error);document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';return}D=j;
-        ['capital','revenue'].forEach(dk=>{
-            const map=savedBudgets[dk]||{};
-            D[dk].budget_comparison.forEach(r=>{
-                const name=r['예산과목'];
-                if(name in map){
-                    const a=map[name];
-                    r['배정예산']=a;r['배정예산_백만']=a/1e6;
-                    const d=r['집행실적'],g=r['예상집행'];
-                    r['잔액']=a-d;r['예상잔액']=a-g;
-                    r['집행율']=a?+(d/a*100).toFixed(1):0;
-                    r['예상집행율']=a?+(g/a*100).toFixed(1):0;
-                    r['상태']=r['예상집행율']>100?'초과':r['예상집행율']>70?'양호':'미달';
-                }
-            });
-        });
-        document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';renderAll();updateSummaryCards('cap');updateSummaryCards('rev')}
-    catch(e){document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block'}
+    });
+    try{const r=await fetch('/api/init');const j=await r.json();D=j;renderAll();updateSummaryCards('cap');updateSummaryCards('rev');}catch(e){}
 }
 
 const fm=v=>(v/1e6).toLocaleString('ko-KR',{maximumFractionDigits:0})+' 백만';
@@ -1403,7 +1353,7 @@ function clr(v){return v<0?'neg':'pos'}
 function niceMax(v){if(v<=0)return 100;const t=v*1.15;if(t<=100)return Math.ceil(t/50)*50;return Math.ceil(t/200)*200}
 function _ch(id,type,data,opts={}){if(CH[id])CH[id].destroy();CH[id]=new Chart(document.getElementById(id),{type,data,options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:11}}}},...opts}})}
 
-function renderAll(){if(!D)return;renderCapital();renderRevenue();renderProjects();renderAI();renderEarlyExec();renderBurndown();renderDelayRisk();renderWhatif();renderReallocation()}
+function renderAll(){if(!D)return;renderCapital();renderRevenue();renderProjects();renderAI();renderEarlyExec();renderWhatif();renderReallocation()}
 
 // ═══════════════════════════════════════
 // 투자비 조기집행 분석
@@ -1449,25 +1399,6 @@ function renderEarlyExec(){
     html+=`<div style="height:100%;width:${barPct}%;background:${barColor};border-radius:6px;transition:width .3s"></div>`;
     html+=`</div>`;
 
-    // 과목별 기여도
-    html+=`<div style="margin-top:12px;font-size:11px;font-weight:700;color:#92400E">과목별 집행 현황</div>`;
-    html+=`<div class="ee-grid" style="margin-top:6px">`;
-    const sorted=[...comp].filter(r=>r['배정예산']>0||r['집행실적']>0).sort((a,b)=>b['집행실적']-a['집행실적']);
-    sorted.forEach(r=>{
-        const catBudget=r['배정예산'];
-        const catExec=r['집행실적'];
-        const catTarget=catBudget*pct/100;
-        const catPct=catTarget>0?Math.min(200,+(catExec/catTarget*100).toFixed(1)):0;
-        const cls=catPct>=100?'ee-over':catPct>=70?'ee-close':'ee-behind';
-        const fillW=Math.min(100,catPct);
-        html+=`<div class="ee-item ${cls}">`;
-        html+=`<div class="ee-name">${r['예산과목']}</div>`;
-        html+=`<div class="ee-bar"><div class="ee-fill" style="width:${fillW}%"></div></div>`;
-        html+=`<div class="ee-nums"><span>${fw(catExec)} / ${fw(catTarget)}</span><span class="ee-achieved">${catPct}%</span></div>`;
-        html+=`</div>`;
-    });
-    html+=`</div>`;
-
     // 남은 기간 안내
     if(gap>0&&!isOverdue&&remainMonths>0){
         const monthlyNeeded=gap/remainMonths;
@@ -1494,17 +1425,20 @@ function renderAI(){
     if(!D||!D.ai_analysis)return;
     renderAIPanel('cap','capital');
     renderAIPanel('rev','revenue');
-    document.getElementById('reportBtn').style.display='inline-block';
 }
 
 function renderAIPanel(prefix,dataKey){
     const ai=D.ai_analysis[dataKey];
-    if(!ai)return;
     const panel=document.getElementById(prefix+'AiPanel');
+    if(!ai||!ai.predictions||Array.isArray(ai.predictions)||!ai.predictions.elapsed_pct){
+        if(panel)panel.style.display='none';
+        return;
+    }
     const summaryEl=document.getElementById(prefix+'AiSummary');
     const alertsEl=document.getElementById(prefix+'AiAlerts');
     const pred=ai.predictions;
     const anomalies=ai.anomalies;
+    document.getElementById('reportBtn').style.display='inline-block';
 
     // Summary stats
     let html='';
@@ -1556,81 +1490,8 @@ document.getElementById('reportModal').addEventListener('click',function(e){if(e
 // ═══════════════════════════════════════
 // Feature 1: 예산 소진 예측 곡선
 // ═══════════════════════════════════════
-function renderBurndown(){
-    if(!D||!D.ai_analysis)return;
-    _renderBurndownChart('cap','capital');
-    _renderBurndownChart('rev','revenue');
-}
-function _renderBurndownChart(prefix,dataKey){
-    const ai=D.ai_analysis[dataKey];
-    if(!ai||!ai.burndown)return;
-    const bd=ai.burndown;
-    const panel=document.getElementById(prefix+'BurndownPanel');
-    const infoEl=document.getElementById(prefix+'BurndownInfo');
-    if(bd.total_budget<=0){panel.style.display='none';return}
-    panel.style.display='block';
-    let info='현재 '+bd.current_month+'월 / 월평균 집행 '+(bd.monthly_rate/1e8).toFixed(2)+'억';
-    if(bd.exhaustion_month&&bd.exhaustion_month<=12){
-        info+=' | <span class="burn-warn">예산소진 예상: '+Math.round(bd.exhaustion_month)+'월</span>';
-    }
-    infoEl.innerHTML=info;
-    const actualData=bd.actual_monthly.map(v=>v===null?null:+(v/1e8).toFixed(2));
-    const projData=bd.projected_monthly.map(v=>+(v/1e8).toFixed(2));
-    const commitData=bd.committed_monthly.map(v=>+(v/1e8).toFixed(2));
-    const budgetData=bd.budget_line.map(v=>+(v/1e8).toFixed(2));
-    const evenData=bd.even_monthly.map(v=>+(v/1e8).toFixed(2));
-    const labels=bd.months.map(m=>m+'월');
-    const cid=prefix==='cap'?'chCapBurndown':'chRevBurndown';
-    _ch(cid,'line',{labels:labels,datasets:[
-        {label:'배정예산',data:budgetData,borderColor:'rgba(59,130,246,0.6)',borderWidth:2,borderDash:[8,4],pointRadius:0,fill:false},
-        {label:'균등배분',data:evenData,borderColor:'rgba(148,163,184,0.5)',borderWidth:1,borderDash:[4,4],pointRadius:0,fill:false},
-        {label:'실제 집행',data:actualData,borderColor:'rgba(239,68,68,1)',borderWidth:2.5,pointRadius:3,pointBackgroundColor:'rgba(239,68,68,1)',fill:false,spanGaps:false},
-        {label:'예측(현재페이스)',data:projData,borderColor:'rgba(239,68,68,0.4)',borderWidth:2,borderDash:[6,3],pointRadius:0,fill:false},
-        {label:'예측(약정포함)',data:commitData,borderColor:'rgba(251,191,36,0.8)',borderWidth:2,borderDash:[6,3],pointRadius:0,fill:false}
-    ]},{scales:{y:{beginAtZero:true,title:{display:true,text:'억원'},ticks:{font:{size:10}}},x:{ticks:{font:{size:10}}}},
-        plugins:{legend:{position:'bottom',labels:{font:{size:10},usePointStyle:true}}}});
-}
 
 // ═══════════════════════════════════════
-// Feature 2: 공사 지연 리스크
-// ═══════════════════════════════════════
-function renderDelayRisk(){
-    if(!D||!D.ai_analysis||!D.ai_analysis.delay_risks)return;
-    _renderDelayRiskPanel('cap','자본예산과목');
-    _renderDelayRiskPanel('rev','손익예산과목');
-}
-function _renderDelayRiskPanel(prefix,catKey){
-    const dr=D.ai_analysis.delay_risks;
-    if(!dr||!dr.items||dr.items.length===0)return;
-    const panel=document.getElementById(prefix+'DelayRiskPanel');
-    const summaryEl=document.getElementById(prefix+'DelayRiskSummary');
-    const tId=prefix==='cap'?'tCapDelayRisk':'tRevDelayRisk';
-    const tb=document.querySelector('#'+tId+' tbody');
-    const items=dr.items.filter(r=>prefix==='cap'?r['설계_자본']>0:r['설계_손익']>0);
-    if(items.length===0){panel.style.display='none';return}
-    panel.style.display='block';
-    const tabHigh=items.filter(r=>r.risk_level==='high').length;
-    const tabMed=items.filter(r=>r.risk_level==='medium').length;
-    const tabAvg=items.length>0?Math.round(items.reduce((s,r)=>s+r.risk_score,0)/items.length):0;
-    let html='';
-    html+='<div class="ai-stat"><div class="ai-label">평균 리스크</div><div class="ai-value" style="color:'+(tabAvg>=60?'var(--red)':tabAvg>=30?'#F59E0B':'var(--green)')+'">'+tabAvg+'점</div><div class="ai-sub">0(안전)~100(위험)</div></div>';
-    html+='<div class="ai-stat"><div class="ai-label">고위험</div><div class="ai-value" style="color:var(--red)">'+tabHigh+'건</div><div class="ai-sub">점수 60+</div></div>';
-    html+='<div class="ai-stat"><div class="ai-label">중위험</div><div class="ai-value" style="color:#F59E0B">'+tabMed+'건</div><div class="ai-sub">점수 30~59</div></div>';
-    html+='<div class="ai-stat"><div class="ai-label">분석 대상</div><div class="ai-value">'+items.length+'건</div><div class="ai-sub">전체 '+dr.total_projects+'건</div></div>';
-    summaryEl.innerHTML=html;
-    tb.innerHTML='';
-    items.filter(r=>r.risk_score>0).slice(0,15).forEach(r=>{
-        const barColor=r.risk_level==='high'?'var(--red)':r.risk_level==='medium'?'#F59E0B':'var(--green)';
-        const badgeCls='risk-'+r.risk_level;
-        const badgeText=r.risk_level==='high'?'고위험':r.risk_level==='medium'?'중위험':'저위험';
-        const tr=document.createElement('tr');
-        tr.innerHTML='<td>'+r['공사번호']+'</td><td>'+r['공사업체']+'</td><td>'+(r[catKey]||'')+'</td><td>'+stBg(r['공사상태'])+'</td>'
-            +'<td><div class="risk-score-bar"><div class="rsf" style="width:'+r.risk_score+'%;background:'+barColor+'"></div></div>'+r.risk_score+'</td>'
-            +'<td><span class="risk-badge '+badgeCls+'">'+badgeText+'</span></td>'
-            +'<td style="font-size:10px;color:var(--text3)">'+r.factors.join(', ')+'</td>';
-        tb.appendChild(tr);
-    });
-}
 
 // ═══════════════════════════════════════
 // Feature 3: What-if 시뮬레이션
@@ -1742,14 +1603,21 @@ function _renderReallocPanel(prefix,dataKey){
     summaryEl.innerHTML=html;
     let bodyHtml='';
     ra.recommendations.forEach(r=>{
-        bodyHtml+='<div class="realloc-card">';
+        bodyHtml+='<details class="realloc-details">';
+        bodyHtml+='<summary>';
+        bodyHtml+='<span class="realloc-toggle">&#9658;</span>';
+        bodyHtml+='<span class="rc-box" style="flex:1"><span class="rc-name">'+r.source+' &#10132; '+r.target+'</span><span class="rc-detail" style="display:inline-block;margin-left:6px;color:var(--text3)">이전 가능액</span></span>';
+        bodyHtml+='<span class="rc-amount">'+(r.amount/1e8).toFixed(2)+'억</span>';
+        bodyHtml+='</summary>';
+        bodyHtml+='<div class="realloc-details-body">';
         bodyHtml+='<div class="rc-box"><div class="rc-name">'+r.source+'</div><div class="rc-detail">예산 '+(r.source_budget/1e8).toFixed(1)+'억 | 예상집행율 <span class="rc-rate-change" style="color:var(--green)">'+r.source_fc_rate+'%</span></div></div>';
         bodyHtml+='<div class="rc-arrow">&#10132;</div>';
         bodyHtml+='<div class="rc-amount">'+(r.amount/1e8).toFixed(2)+'억</div>';
         bodyHtml+='<div class="rc-arrow">&#10132;</div>';
-        bodyHtml+='<div class="rc-box"><div class="rc-name">'+r.target+'</div><div class="rc-detail">예산 '+(r.target_budget/1e8).toFixed(1)+'억 | 예상집행율 <span class="rc-rate-change" style="color:var(--red)">'+r.target_fc_rate+'%</span> → <span class="rc-rate-change" style="color:var(--green)">'+r.target_new_rate+'%</span></div></div>';
+        bodyHtml+='<div class="rc-box"><div class="rc-name">'+r.target+'</div><div class="rc-detail">예산 '+(r.target_budget/1e8).toFixed(1)+'억 | 예상집행율 <span class="rc-rate-change" style="color:var(--red)">'+r.target_fc_rate+'%</span> &#8594; <span class="rc-rate-change" style="color:var(--green)">'+r.target_new_rate+'%</span></div></div>';
         bodyHtml+='<div class="rc-reason">'+r.reason+'</div>';
         bodyHtml+='</div>';
+        bodyHtml+='</details>';
     });
     bodyEl.innerHTML=bodyHtml;
 }
@@ -1870,8 +1738,8 @@ function saveBudgets(sec){
     });
     updateTotals(sec);
     updateSummaryCards(sec);
-    if(sec==='cap'){renderEarlyExec();renderCapitalChart();renderBurndown();renderWhatif();renderReallocation()}
-    else{renderRevenueChart();renderBurndown();renderWhatif();renderReallocation()}
+    if(sec==='cap'){renderEarlyExec();renderCapitalChart();renderWhatif();renderReallocation()}
+    else{renderRevenueChart();renderWhatif();renderReallocation()}
     // 서버에 저장 (기본항목 금액 + 사용자추가 항목 전체)
     const saveData={capital:{budgets:{},custom_items:[]},revenue:{budgets:{},custom_items:[]}};
     ['capital','revenue'].forEach(k=>{
@@ -2171,16 +2039,21 @@ def api_analyze():
         # 배정예산 적용 후 AI 분석 수행
         cap_comp = result['capital']['budget_comparison']
         rev_comp = result['revenue']['budget_comparison']
-        result['ai_analysis']['capital']['burndown'] = _burndown_forecast(cap_comp, BUDGET_CAPITAL)
         result['ai_analysis']['capital']['whatif'] = _whatif_baseline(cap_comp, BUDGET_CAPITAL)
-        result['ai_analysis']['revenue']['burndown'] = _burndown_forecast(rev_comp, BUDGET_REVENUE)
         result['ai_analysis']['revenue']['whatif'] = _whatif_baseline(rev_comp, BUDGET_REVENUE)
-        result['ai_analysis']['delay_risks'] = _delay_risk_scores(result.get('projects', []))
         result['ai_analysis']['capital']['reallocation'] = _reallocation_recommendations(cap_comp)
         result['ai_analysis']['revenue']['reallocation'] = _reallocation_recommendations(rev_comp)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': f'분석 오류: {str(e)}'}), 500
+
+
+@app.route('/api/reset')
+def api_reset():
+    """업로드 파일 상태 초기화 (배정예산 유지)"""
+    global LAST_FILE
+    LAST_FILE = None
+    return jsonify({'ok': True})
 
 
 @app.route('/api/refresh')
@@ -2195,11 +2068,8 @@ def api_refresh():
         # 배정예산 적용 후 AI 분석 수행
         cap_comp = result['capital']['budget_comparison']
         rev_comp = result['revenue']['budget_comparison']
-        result['ai_analysis']['capital']['burndown'] = _burndown_forecast(cap_comp, BUDGET_CAPITAL)
         result['ai_analysis']['capital']['whatif'] = _whatif_baseline(cap_comp, BUDGET_CAPITAL)
-        result['ai_analysis']['revenue']['burndown'] = _burndown_forecast(rev_comp, BUDGET_REVENUE)
         result['ai_analysis']['revenue']['whatif'] = _whatif_baseline(rev_comp, BUDGET_REVENUE)
-        result['ai_analysis']['delay_risks'] = _delay_risk_scores(result.get('projects', []))
         result['ai_analysis']['capital']['reallocation'] = _reallocation_recommendations(cap_comp)
         result['ai_analysis']['revenue']['reallocation'] = _reallocation_recommendations(rev_comp)
         return jsonify(result)
