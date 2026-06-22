@@ -1658,9 +1658,7 @@ function renderCapital(){
     comp.forEach((r,i)=>{
         const a=r['배정예산'],b=r['소비금액'],c=r['약정금액'],d=r['집행실적'],e=r['잔액'],f=r['진행중공사비'],g=r['예상집행'],ga=r['예상잔액'],dr=r['집행율'],gr=r['예상집행율'];
         const tr=document.createElement('tr');
-        const codeCell=r._custom
-            ?`<td><input class="inp-code" type="text" value="${r['사업코드']}" placeholder="사업코드" onchange="D.capital.budget_comparison[${i}]['사업코드']=this.value"></td>`
-            :`<td>${r['사업코드']}</td>`;
+        const codeCell=`<td><input class="inp-code" type="text" value="${r['사업코드']||''}" placeholder="사업코드" onchange="D.capital.budget_comparison[${i}]['사업코드']=this.value"></td>`;
         const nameCell=r._custom
             ?`<td><input class="inp-code" type="text" value="${r['예산과목']}" placeholder="사업명" onchange="D.capital.budget_comparison[${i}]['예산과목']=this.value"></td>`
             :`<td>${r['예산과목']}</td>`;
@@ -1694,9 +1692,7 @@ function renderRevenue(){
     comp.forEach((r,i)=>{
         const a=r['배정예산'],b=r['소비금액'],c=r['약정금액'],d=r['집행실적'],e=r['잔액'],f=r['진행중공사비'],g=r['예상집행'],ga=r['예상잔액'],dr=r['집행율'],gr=r['예상집행율'];
         const tr=document.createElement('tr');
-        const codeCell=r._custom
-            ?`<td><input class="inp-code" type="text" value="${r['사업코드']}" placeholder="사업코드" onchange="D.revenue.budget_comparison[${i}]['사업코드']=this.value"></td>`
-            :`<td>${r['사업코드']}</td>`;
+        const codeCell=`<td><input class="inp-code" type="text" value="${r['사업코드']||''}" placeholder="사업코드" onchange="D.revenue.budget_comparison[${i}]['사업코드']=this.value"></td>`;
         const nameCell=r._custom
             ?`<td><input class="inp-code" type="text" value="${r['예산과목']}" placeholder="사업명" onchange="D.revenue.budget_comparison[${i}]['예산과목']=this.value"></td>`
             :`<td>${r['예산과목']}</td>`;
@@ -1743,11 +1739,13 @@ function saveBudgets(sec){
     // 서버에 저장 (기본항목 금액 + 사용자추가 항목 전체)
     const saveData={capital:{budgets:{},custom_items:[]},revenue:{budgets:{},custom_items:[]}};
     ['capital','revenue'].forEach(k=>{
+        saveData[k].codes={};
         (D[k].budget_comparison||[]).forEach(r=>{
             if(r._custom){
                 if(r['예산과목']) saveData[k].custom_items.push({사업코드:r['사업코드'],예산과목:r['예산과목'],배정예산:r['배정예산']||0});
-            } else if(r['배정예산']>0){
-                saveData[k].budgets[r['예산과목']]=r['배정예산'];
+            } else {
+                if(r['배정예산']>0) saveData[k].budgets[r['예산과목']]=r['배정예산'];
+                if(r['사업코드']) saveData[k].codes[r['예산과목']]=r['사업코드'];
             }
         });
     });
@@ -1932,6 +1930,8 @@ def _apply_saved_budgets(comp_list, section_key, saved):
     # 구버전 호환 (flat dict)
     if isinstance(sec_data, dict) and 'budgets' not in sec_data and 'custom_items' not in sec_data:
         bmap = sec_data
+    # 사업코드 복원
+    codes_map = sec_data.get('codes', {}) if isinstance(sec_data, dict) else {}
     for r in comp_list:
         name = r['예산과목']
         if name in bmap and bmap[name] > 0:
@@ -1944,6 +1944,8 @@ def _apply_saved_budgets(comp_list, section_key, saved):
             r['집행율'] = round(d / a * 100, 1) if a else 0
             r['예상집행율'] = round(g / a * 100, 1) if a else 0
             r['상태'] = '초과' if r['예상집행율'] > 100 else ('양호' if r['예상집행율'] > 70 else '미달')
+        if name in codes_map:
+            r['사업코드'] = codes_map[name]
     # 사용자 추가 항목 복원
     custom_items = sec_data.get('custom_items', []) if isinstance(sec_data, dict) else []
     existing_names = {r['예산과목'] for r in comp_list}
