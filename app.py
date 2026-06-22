@@ -961,6 +961,9 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 .inp-budget:focus{border-color:var(--navy2);outline:none;background:#fff;box-shadow:0 0 0 2px rgba(26,58,92,.15)}
 .inp-code{width:120px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11px;transition:all .15s}
 .inp-code:focus{border-color:var(--navy2);outline:none;box-shadow:0 0 0 2px rgba(26,58,92,.15)}
+.dbl-code{cursor:default;user-select:none}
+.dbl-code:hover{background:#EFF6FF;cursor:pointer}
+.dbl-code:hover::after{content:' ✎';font-size:9px;color:var(--navy2);opacity:.5}
 
 /* ── Search ── */
 .sf{margin:12px 0;display:flex;gap:8px;align-items:center}
@@ -1658,7 +1661,7 @@ function renderCapital(){
     comp.forEach((r,i)=>{
         const a=r['배정예산'],b=r['소비금액'],c=r['약정금액'],d=r['집행실적'],e=r['잔액'],f=r['진행중공사비'],g=r['예상집행'],ga=r['예상잔액'],dr=r['집행율'],gr=r['예상집행율'];
         const tr=document.createElement('tr');
-        const codeCell=`<td><input class="inp-code" type="text" value="${r['사업코드']||''}" placeholder="사업코드" onchange="D.capital.budget_comparison[${i}]['사업코드']=this.value"></td>`;
+        const codeCell=`<td class="dbl-code" ondblclick="startEditCode(this,'capital',${i})">${r['사업코드']||''}</td>`;
         const nameCell=r._custom
             ?`<td><input class="inp-code" type="text" value="${r['예산과목']}" placeholder="사업명" onchange="D.capital.budget_comparison[${i}]['예산과목']=this.value"></td>`
             :`<td>${r['예산과목']}</td>`;
@@ -1692,7 +1695,7 @@ function renderRevenue(){
     comp.forEach((r,i)=>{
         const a=r['배정예산'],b=r['소비금액'],c=r['약정금액'],d=r['집행실적'],e=r['잔액'],f=r['진행중공사비'],g=r['예상집행'],ga=r['예상잔액'],dr=r['집행율'],gr=r['예상집행율'];
         const tr=document.createElement('tr');
-        const codeCell=`<td><input class="inp-code" type="text" value="${r['사업코드']||''}" placeholder="사업코드" onchange="D.revenue.budget_comparison[${i}]['사업코드']=this.value"></td>`;
+        const codeCell=`<td class="dbl-code" ondblclick="startEditCode(this,'revenue',${i})">${r['사업코드']||''}</td>`;
         const nameCell=r._custom
             ?`<td><input class="inp-code" type="text" value="${r['예산과목']}" placeholder="사업명" onchange="D.revenue.budget_comparison[${i}]['예산과목']=this.value"></td>`
             :`<td>${r['예산과목']}</td>`;
@@ -1704,6 +1707,31 @@ function renderRevenue(){
         tb.appendChild(tr);
     });
     updateTotals('rev');
+}
+
+// ═══════════════════════════════════════
+// 사업코드 더블클릭 인라인 편집
+// ═══════════════════════════════════════
+function startEditCode(td, dataKey, idx){
+    const prev=td.textContent.trim();
+    td.classList.remove('dbl-code');
+    td.ondblclick=null;
+    const inp=document.createElement('input');
+    inp.className='inp-code';
+    inp.value=prev;
+    inp.placeholder='사업코드';
+    td.textContent='';
+    td.appendChild(inp);
+    inp.focus();inp.select();
+    function commit(){
+        const val=inp.value.trim();
+        D[dataKey].budget_comparison[idx]['사업코드']=val;
+        td.textContent=val;
+        td.classList.add('dbl-code');
+        td.ondblclick=()=>startEditCode(td,dataKey,idx);
+    }
+    inp.addEventListener('blur',commit);
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){inp.blur();}if(e.key==='Escape'){inp.value=prev;inp.blur();}});
 }
 
 // ═══════════════════════════════════════
