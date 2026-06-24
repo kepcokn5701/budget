@@ -120,57 +120,64 @@ def _date_str(val):
 # 3-A. AI 분석 함수 (통계/규칙 기반)
 # ──────────────────────────────────────────────
 def _predict_yearend(comparison, budget_dict):
-    """경과 월수 기반 연말 예상 집행액 추정"""
+    """예산 현황 분석: 가용예산, 집행진도, 항목별 위험도"""
     now = datetime.now()
     month = now.month
-    elapsed = month / 12  # 연간 경과 비율
+    elapsed_pct = round(month / 12 * 100, 1)  # 시간 경과율
 
-    if elapsed <= 0:
-        elapsed = 1 / 12
-
-    confidence = '높음' if month >= 9 else ('보통' if month >= 6 else '낮음')
-
-    predictions = []
-    total_budget = sum(v[1] * 1e6 for v in budget_dict.values())
-    total_current_exec = 0
-    total_predicted = 0
+    items = []
+    total_budget = 0
+    total_exec = 0
+    total_ongoing = 0
 
     for r in comparison:
         a = r['배정예산']
         d = r['집행실적']
         f = r['진행중공사비']
-        total_current_exec += d
+        total_budget += a
+        total_exec += d
+        total_ongoing += f
 
-        # 연말 예측: 현재 집행실적을 경과비율로 나눈 값
-        if d > 0:
-            projected = round(d / elapsed)
+        balance = a - d           # 잔액
+        available = a - d - f     # 가용예산 (잔액 - 진행중공사비)
+        exec_rate = round(d / a * 100, 1) if a else 0
+
+        # 위험도: 가용예산 기준 판단
+        if a > 0 and available < 0:
+            risk = '초과위험'     # 진행중 포함 시 예산 초과
+        elif a > 0 and available < a * 0.1:
+            risk = '주의'        # 가용예산이 10% 미만
         else:
-            projected = f  # 집행실적 없으면 진행중공사비만
+            risk = '정상'
 
-        # 진행중공사비 반영 (최소 집행실적 + 진행중공사비)
-        projected = max(projected, d + f)
-        total_predicted += projected
-
-        risk = '초과위험' if a > 0 and projected > a else ('주의' if a > 0 and projected > a * 0.9 else '정상')
-
-        predictions.append({
+        items.append({
             '예산과목': r['예산과목'],
             '배정예산': a,
-            '현재집행': d,
-            '연말예측': projected,
-            '예측집행율': round(projected / a * 100, 1) if a else 0,
+            '집행실적': d,
+            '진행중공사비': f,
+            '잔액': balance,
+            '가용예산': available,
+            '집행율': exec_rate,
             '위험도': risk,
         })
 
+    total_balance = total_budget - total_exec
+    total_available = total_balance - total_ongoing
+    exec_rate = round(total_exec / total_budget * 100, 1) if total_budget else 0
+    # 집행 진도 판단: 집행율 vs 시간경과율
+    pace_gap = round(exec_rate - elapsed_pct, 1)
+
     return {
         'month': month,
-        'elapsed_pct': round(elapsed * 100, 1),
-        'confidence': confidence,
+        'elapsed_pct': elapsed_pct,
         'total_budget': total_budget,
-        'total_current_exec': total_current_exec,
-        'total_predicted': total_predicted,
-        'predicted_rate': round(total_predicted / total_budget * 100, 1) if total_budget else 0,
-        'items': predictions,
+        'total_exec': total_exec,
+        'total_ongoing': total_ongoing,
+        'total_balance': total_balance,
+        'total_available': total_available,
+        'exec_rate': exec_rate,
+        'pace_gap': pace_gap,
+        'items': items,
     }
 
 
@@ -258,7 +265,11 @@ def _generate_report(cap_comp, rev_comp, cap_pred, rev_pred, cap_anomalies, rev_
     lines.append(f'  - 집행실적: {tc_exec / 1e8:.1f}억원 (집행율 {tc_rate}%)')
     lines.append(f'  - 예상집행: {tc_forecast / 1e8:.1f}억원 (예상집행율 {tc_fc_rate}%)')
     if cap_pred:
-        lines.append(f'  - 연말 예측: {cap_pred["total_predicted"] / 1e8:.1f}억원 (신뢰도: {cap_pred["confidence"]})')
+        avail = cap_pred.get("total_available", 0)
+        lines.append(f'  - 가용예산: {avail / 1e8:.1f}억원 (잔액 − 진행중공사비)')
+        pace = cap_pred.get("pace_gap", 0)
+        pace_lbl = '빠름' if pace > 5 else ('느림' if pace < -10 else '적정')
+        lines.append(f'  - 집행 진도: {pace_lbl} (집행율 {cap_pred.get("exec_rate",0)}% / 경과 {cap_pred.get("elapsed_pct",0)}%)')
 
     # 자본 주요 항목
     cap_over = [r for r in cap_comp if r['예상집행율'] > 90 and r['배정예산'] > 0]
@@ -280,7 +291,11 @@ def _generate_report(cap_comp, rev_comp, cap_pred, rev_pred, cap_anomalies, rev_
     lines.append(f'  - 집행실적: {tr_exec / 1e8:.1f}억원 (집행율 {tr_rate}%)')
     lines.append(f'  - 예상집행: {tr_forecast / 1e8:.1f}억원 (예상집행율 {tr_fc_rate}%)')
     if rev_pred:
-        lines.append(f'  - 연말 예측: {rev_pred["total_predicted"] / 1e8:.1f}억원 (신뢰도: {rev_pred["confidence"]})')
+        ravail = rev_pred.get("total_available", 0)
+        lines.append(f'  - 가용예산: {ravail / 1e8:.1f}억원 (잔액 − 진행중공사비)')
+        rpace = rev_pred.get("pace_gap", 0)
+        rpace_lbl = '빠름' if rpace > 5 else ('느림' if rpace < -10 else '적정')
+        lines.append(f'  - 집행 진도: {rpace_lbl} (집행율 {rev_pred.get("exec_rate",0)}% / 경과 {rev_pred.get("elapsed_pct",0)}%)')
 
     rev_over = [r for r in rev_comp if r['예상집행율'] > 90 and r['배정예산'] > 0]
     if rev_over:
@@ -1096,7 +1111,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <span id="fn" style="font-size:11px;opacity:.8"></span>
 <span id="today" style="font-size:11px;opacity:.8"></span>
 <button class="ubtn" id="reportBtn" onclick="openReport()" style="display:none">&#128196; 보고서</button>
-<button class="ubtn" id="refreshBtn" onclick="doRefresh()" style="display:none">&#8635; 새로고침</button>
+<button class="ubtn" id="refreshBtn" onclick="doRefresh()">&#8635; 새로고침</button>
 <label class="ubtn ubtn-primary">파일 업로드<input type="file" id="fi" accept=".xlsx,.xls" style="display:none"></label>
 </div>
 </header>
@@ -1124,7 +1139,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="cd c4"><div class="lb">잔액 (A-D)</div><div class="vl" id="capE">-</div><div class="sb">배정예산 - 집행실적</div></div>
 <div class="cd c3"><div class="lb">진행중공사비 (F)</div><div class="vl" id="capF">-</div><div class="sb">미준공 금액</div></div>
 <div class="cd c5"><div class="lb">최종예상 (G=D+F)</div><div class="vl" id="capG">-</div><div class="sb" id="capGR">예상집행율 -</div></div>
-<div class="cd c6"><div class="lb">공사건수</div><div class="vl" id="capCnt">-</div><div class="sb">&nbsp;</div></div>
+<div class="cd c6"><div class="lb">공사건수</div><div class="vl" id="capCnt">-</div><div class="sb">전체 (자본+손익)</div></div>
 </div>
 <div class="early-exec" id="capEarlyExec">
 <div class="ee-header">
@@ -1205,7 +1220,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="cd c4"><div class="lb">잔액 (A-D)</div><div class="vl" id="revE">-</div><div class="sb">배정예산 - 집행실적</div></div>
 <div class="cd c3"><div class="lb">진행중공사비 (F)</div><div class="vl" id="revF">-</div><div class="sb">미준공 금액</div></div>
 <div class="cd c5"><div class="lb">최종예상 (G=D+F)</div><div class="vl" id="revG">-</div><div class="sb" id="revGR">예상집행율 -</div></div>
-<div class="cd c6"><div class="lb">공사건수</div><div class="vl" id="revCnt">-</div><div class="sb">&nbsp;</div></div>
+<div class="cd c6"><div class="lb">공사건수</div><div class="vl" id="revCnt">-</div><div class="sb">전체 (자본+손익)</div></div>
 </div>
 <div class="stabs">
 <button class="st on" onclick="subTab('rev',this,'revBudget')">예산현황</button>
@@ -1334,7 +1349,6 @@ document.getElementById('fi').addEventListener('change',async e=>{
 async function doRefresh(){
     // 업로드 데이터 + 배정예산 전체 초기화
     try{await fetch('/api/reset');}catch(e){}
-    document.getElementById('refreshBtn').style.display='none';
     document.getElementById('reportBtn').style.display='none';
     document.getElementById('fn').textContent='';
     ['cap','rev'].forEach(p=>{
@@ -1433,7 +1447,7 @@ function renderAI(){
 function renderAIPanel(prefix,dataKey){
     const ai=D.ai_analysis[dataKey];
     const panel=document.getElementById(prefix+'AiPanel');
-    if(!ai||!ai.predictions||Array.isArray(ai.predictions)||!ai.predictions.elapsed_pct){
+    if(!ai||!ai.predictions||Array.isArray(ai.predictions)||!ai.predictions.month){
         if(panel)panel.style.display='none';
         return;
     }
@@ -1445,11 +1459,21 @@ function renderAIPanel(prefix,dataKey){
 
     // Summary stats
     let html='';
-    html+=`<div class="ai-stat"><div class="ai-label">연간 경과율</div><div class="ai-value">${pred.elapsed_pct}%</div><div class="ai-sub">${pred.month}월 / 12월</div></div>`;
-    html+=`<div class="ai-stat"><div class="ai-label">연말 예측 집행액</div><div class="ai-value">${(pred.total_predicted/1e8).toFixed(1)}억</div><div class="ai-sub">예측 집행율 ${pred.predicted_rate}%</div></div>`;
-    html+=`<div class="ai-stat"><div class="ai-label">예측 신뢰도</div><div class="ai-value">${pred.confidence}</div><div class="ai-sub">${pred.month>=9?'데이터 충분':'추가 데이터 필요'}</div></div>`;
-
-    // Risk items count
+    // 1) 가용예산: 잔액 - 진행중공사비 (새 공사에 실제 사용 가능한 금액)
+    if(pred.total_budget>0){
+        const avail=pred.total_available||0;
+        const availColor=avail<0?'var(--red)':avail<pred.total_budget*0.1?'#F59E0B':'var(--green)';
+        html+=`<div class="ai-stat"><div class="ai-label">가용예산</div><div class="ai-value" style="color:${availColor}">${(avail/1e8).toFixed(1)}억</div><div class="ai-sub">잔액 − 진행중공사비</div></div>`;
+    }else{
+        html+=`<div class="ai-stat"><div class="ai-label">가용예산</div><div class="ai-value" style="color:var(--text3)">-</div><div class="ai-sub">배정예산 입력 필요</div></div>`;
+    }
+    // 2) 집행 진도: 집행율 vs 시간 경과율
+    const paceGap=pred.pace_gap||0;
+    const paceLabel=paceGap>5?'빠름':paceGap<-10?'느림':'적정';
+    const paceColor=paceGap>5?'#F59E0B':paceGap<-10?'var(--red)':'var(--green)';
+    const execRate=pred.exec_rate||0;
+    html+=`<div class="ai-stat"><div class="ai-label">집행 진도</div><div class="ai-value" style="color:${paceColor}">${paceLabel}</div><div class="ai-sub">집행율 ${execRate}% / 경과 ${pred.elapsed_pct}%</div></div>`;
+    // 3) 위험/주의 항목
     const riskItems=pred.items.filter(i=>i['위험도']!=='정상');
     html+=`<div class="ai-stat"><div class="ai-label">위험/주의 항목</div><div class="ai-value" style="color:${riskItems.length>0?'var(--red)':'var(--green)'}">${riskItems.length}건</div><div class="ai-sub">${riskItems.length>0?riskItems.map(i=>i['예산과목'].substring(0,6)).join(', '):'이상 없음'}</div></div>`;
     summaryEl.innerHTML=html;
@@ -1653,7 +1677,7 @@ function renderCapital(){
     document.getElementById('capF').textContent=fm(s['진행중공사비']);
     document.getElementById('capG').textContent=fm(s['예상집행']);
     document.getElementById('capGR').textContent='예상집행율 '+fp(s['예상집행율']);
-    document.getElementById('capCnt').textContent=s['공사건수']+'건';
+    document.getElementById('capCnt').textContent=(D.projects?D.projects.length:0)+'건';
     renderCapitalChart();
 
     const comp=D.capital.budget_comparison;
@@ -1687,7 +1711,7 @@ function renderRevenue(){
     document.getElementById('revF').textContent=fm(s['진행중공사비']);
     document.getElementById('revG').textContent=fm(s['예상집행']);
     document.getElementById('revGR').textContent='예상집행율 '+fp(s['예상집행율']);
-    document.getElementById('revCnt').textContent=s['공사건수']+'건';
+    document.getElementById('revCnt').textContent=(D.projects?D.projects.length:0)+'건';
     renderRevenueChart();
 
     const comp=D.revenue.budget_comparison;
