@@ -1332,7 +1332,7 @@ document.getElementById('fi').addEventListener('change',async e=>{
 });
 
 async function doRefresh(){
-    // 업로드 데이터 초기화 - 배정예산은 유지
+    // 업로드 데이터 + 배정예산 전체 초기화
     try{await fetch('/api/reset');}catch(e){}
     document.getElementById('refreshBtn').style.display='none';
     document.getElementById('reportBtn').style.display='none';
@@ -2080,9 +2080,15 @@ def api_analyze():
 
 @app.route('/api/reset')
 def api_reset():
-    """업로드 파일 상태 초기화 (배정예산 유지)"""
+    """업로드 파일 및 배정예산 전체 초기화"""
     global LAST_FILE
     LAST_FILE = None
+    # budgets.json 초기화
+    try:
+        with open(BUDGET_FILE, 'w', encoding='utf-8') as f:
+            json.dump({}, f)
+    except Exception:
+        pass
     return jsonify({'ok': True})
 
 
