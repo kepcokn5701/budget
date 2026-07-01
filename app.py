@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-import os, json
+import os, json, logging
 from flask import Flask, request, jsonify, render_template_string
 import pandas as pd
 from datetime import datetime
+from collections import deque
 
 app = Flask(__name__)
 
@@ -10,6 +11,22 @@ UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'upload
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 LAST_FILE = None
 BUDGET_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'budgets.json')
+
+# ── 서버 로그 수집 ──
+SERVER_LOGS = deque(maxlen=200)
+
+def _log(msg):
+    ts = datetime.now().strftime('%H:%M:%S')
+    SERVER_LOGS.append(f'[{ts}] {msg}')
+
+_log('서버 시작')
+
+@app.after_request
+def _log_request(response):
+    # /api/logs 자체는 로깅 제외 (무한루프 방지)
+    if request.path != '/api/logs':
+        _log(f'{request.method} {request.path} → {response.status_code}')
+    return response
 
 # ──────────────────────────────────────────────
 # 1. 배정예산 데이터 (백만원)
@@ -463,25 +480,6 @@ def _delay_risk_scores(projects):
     }
 
 
-def _whatif_baseline(comparison, budget_dict):
-    """What-if 시뮬레이션 기준 데이터"""
-    now = datetime.now()
-    month = now.month
-    remaining = 12 - month
-    total_budget = sum(r['배정예산'] for r in comparison)
-    total_exec = sum(r['집행실적'] for r in comparison)
-    total_forecast = sum(r['예상집행'] for r in comparison)
-    monthly_rate = total_exec / month if month > 0 else 0
-    return {
-        'current_month': month, 'remaining_months': remaining,
-        'total_budget': total_budget, 'total_exec': total_exec,
-        'total_forecast': total_forecast, 'monthly_rate': monthly_rate,
-        'current_yearend_projected': round(monthly_rate * 12),
-        'current_yearend_rate': round(monthly_rate * 12 / total_budget * 100, 1) if total_budget else 0,
-        'target_60': total_budget * 0.6, 'target_90': total_budget * 0.9,
-        'exec_rate': round(total_exec / total_budget * 100, 1) if total_budget else 0,
-    }
-
 
 def _reallocation_recommendations(comparison):
     """예산 재배분 추천: 잉여 항목 → 부족 항목 이전 제안 (단일 섹션)"""
@@ -586,6 +584,7 @@ def parse_and_analyze(filepath):
     col_start_date = _find_col('착공') or 14
     col_site_done = _find_col('현장시공') or _find_col('시공완료') or 15
     col_completion = _find_col('준공검사') or _find_col('준공계') or 16
+    col_sagup = _find_col('사급재료비') or 26  # AA열
 
     # 금액 컬럼: 총공사비(자본/수익) 감지
     # 서브헤더에서 '자본'/'수익' 찾기 (총공사비 그룹 하위)
@@ -640,6 +639,12 @@ def parse_and_analyze(filepath):
                 paid_cap, paid_rev = 0, 0
                 est_cap, est_rev = cost_cap, cost_rev
 
+        # 사급재료비 → 자본/손익 비례배분하여 약정금액 산출
+        sagup = _num(row[col_sagup]) if col_sagup < df.shape[1] else 0
+        total_cost = cost_cap + cost_rev
+        yakjung_cap = round(sagup * cost_cap / total_cost) if total_cost > 0 else 0
+        yakjung_rev = round(sagup * cost_rev / total_cost) if total_cost > 0 else 0
+
         projects.append({
             '공사번호': str(cno).strip(),
             '공사성격': str(row[col_char]).strip() if col_char < df.shape[1] and pd.notna(row.get(col_char)) else '',
@@ -658,6 +663,8 @@ def parse_and_analyze(filepath):
             '설계_손익': cost_rev,
             '기성_손익': paid_rev,
             '예정_손익': est_rev,
+            '약정_자본': yakjung_cap,
+            '약정_손익': yakjung_rev,
         })
 
     # ── 기성고 시트 ──
@@ -719,7 +726,7 @@ def parse_and_analyze(filepath):
     # 분석: 자본 / 손익 분리
     # ═══════════════════════════════════════
 
-    def _aggregate(proj_list, design_key, paid_key, est_key, cat_key,
+    def _aggregate(proj_list, design_key, paid_key, est_key, cat_key, yakjung_key,
                    budget_dict=None, cat_map_dict=None):
         """과목별 집계 (엑셀 예산현황 시트와 동일 구조)"""
         cat_map = {}
@@ -736,14 +743,10 @@ def parse_and_analyze(filepath):
                 s['완료'] += 1
             elif '중지' in p['공사상태']:
                 s['중지'] += 1
-                diff = p[design_key] - p[paid_key]
-                if diff > 0:
-                    s['약정금액'] += diff
             else:
                 s['진행중'] += 1
-                diff = p[design_key] - p[paid_key]
-                if diff > 0:
-                    s['약정금액'] += diff
+            # 약정금액 = 사급재료비 비례배분 (자본/손익)
+            s['약정금액'] += p.get(yakjung_key, 0)
             s['소비금액'] += p[paid_key]
             s['진행중공사비'] += p[est_key]
 
@@ -764,9 +767,9 @@ def parse_and_analyze(filepath):
 
         return sorted(cat_map.values(), key=lambda x: x['소비금액'] + x['약정금액'], reverse=True)
 
-    cap_cats = _aggregate(projects, '설계_자본', '기성_자본', '예정_자본', '자본예산과목',
+    cap_cats = _aggregate(projects, '설계_자본', '기성_자본', '예정_자본', '자본예산과목', '약정_자본',
                           BUDGET_CAPITAL, CAPITAL_CAT_MAP)
-    rev_cats = _aggregate(projects, '설계_손익', '기성_손익', '예정_손익', '손익예산과목',
+    rev_cats = _aggregate(projects, '설계_손익', '기성_손익', '예정_손익', '손익예산과목', '약정_손익',
                           BUDGET_REVENUE, REVENUE_CAT_MAP)
 
     # ── 자본 배정예산 대비 ──
@@ -914,7 +917,7 @@ header .rt{display:flex;align-items:center;gap:10px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── Layout ── */
-.wrap{max-width:1600px;margin:0 auto;padding:20px 24px}
+.wrap{max-width:1600px;margin:0 auto;padding:20px 24px 40px}
 .main-tabs{display:flex;gap:2px;margin-bottom:20px}
 .mt{padding:11px 36px;font-size:14px;font-weight:700;border:none;cursor:pointer;border-radius:8px 8px 0 0;transition:all .2s;letter-spacing:-.2px}
 .mt.cap{background:var(--navy2);color:#fff}.mt.rev{background:var(--orange);color:#fff}
@@ -1028,19 +1031,6 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 .burn-warn{color:var(--red);font-weight:600}
 
 
-/* ── What-if Simulation ── */
-.whatif-panel{background:linear-gradient(135deg,#ECFDF5 0%,#D1FAE5 50%,#F0FDF4 100%) !important;border-color:#A7F3D0 !important}
-.whatif-panel::before{background:linear-gradient(180deg,#10B981,#059669) !important}
-.whatif-controls{display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:10px 14px;background:#fff;border-radius:8px;border:1px solid #A7F3D0}
-.whatif-controls label{font-size:11px;font-weight:700;color:#065F46;white-space:nowrap}
-.whatif-controls input[type=range]{flex:1;height:6px;-webkit-appearance:none;appearance:none;background:#D1FAE5;border-radius:3px;outline:none}
-.whatif-controls input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;background:#10B981;border-radius:50%;cursor:pointer;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.2)}
-.whatif-pct-label{font-size:16px;font-weight:800;color:#065F46;min-width:45px;text-align:right}
-.whatif-chart-wrap{margin:12px 0}
-.whatif-message{padding:8px 12px;border-radius:6px;font-size:11px;margin-top:8px}
-.whatif-msg-ok{background:#D1FAE5;color:#065F46}
-.whatif-msg-warn{background:#FEF3C7;color:#92400E}
-.whatif-msg-danger{background:#FEE2E2;color:#991B1B}
 
 /* ── Reallocation ── */
 .realloc-panel{background:linear-gradient(135deg,#F5F3FF 0%,#EDE9FE 50%,#FDF4FF 100%) !important;border-color:#C4B5FD !important}
@@ -1058,6 +1048,17 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 .rc-rate-change{font-size:10px;font-weight:700}
 .rc-amount{background:#EDE9FE;color:#5B21B6;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:800;white-space:nowrap;flex-shrink:0}
 .rc-reason{font-size:10px;color:var(--text3);width:100%;border-top:1px solid #EDE9FE;padding-top:6px;margin-top:4px}
+
+/* ── Server Log Panel ── */
+.server-log-panel{position:fixed;bottom:0;left:0;right:0;z-index:900;background:#1E293B;border-top:2px solid #334155}
+.log-toggle{display:flex;align-items:center;gap:8px;padding:6px 20px;cursor:pointer;color:#94A3B8;font-size:11px;font-weight:600;list-style:none;user-select:none}
+.log-toggle::-webkit-details-marker{display:none}
+.log-toggle:hover{color:#E2E8F0}
+#logDetails[open] .log-toggle{background:#0F172A;color:#E2E8F0}
+.log-body{max-height:220px;overflow-y:auto;padding:0 20px 10px;background:#0F172A}
+.log-content{font-family:'Consolas','Courier New',monospace;font-size:11px;color:#A5F3FC;white-space:pre-wrap;word-break:break-all;margin:0;line-height:1.6}
+.log-btn{background:#334155;color:#CBD5E1;border:none;padding:3px 10px;border-radius:4px;font-size:10px;cursor:pointer}
+.log-btn:hover{background:#475569}
 
 /* ── Report Modal ── */
 .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:9999;justify-content:center;align-items:center}
@@ -1192,19 +1193,6 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="ai-summary" id="capAiSummary"></div>
 <div class="ai-alerts" id="capAiAlerts"></div>
 </div>
-<!-- Delay Risk -->
-<!-- What-if -->
-<div class="ai-panel whatif-panel" id="capWhatifPanel" style="display:none">
-<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#10B981,#059669)">&#9889;</div> What-if 시뮬레이션</div>
-<div class="whatif-controls">
-<label>집행 속도 조정</label>
-<input type="range" id="capWhatifSlider" min="50" max="150" value="100" step="5" oninput="updateWhatif('cap')">
-<span id="capWhatifPctLabel" class="whatif-pct-label">100%</span>
-</div>
-<div class="ai-summary" id="capWhatifSummary"></div>
-<div class="whatif-chart-wrap"><canvas id="chCapWhatif" style="max-height:200px"></canvas></div>
-<div id="capWhatifMessage" class="whatif-message"></div>
-</div>
 <div class="ai-panel realloc-panel" id="capReallocPanel" style="display:none">
 <div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#7C3AED,#6D28D9)">&#8644;</div> 예산 재배분 추천 (자본)</div>
 <div class="ai-summary" id="capReallocSummary"></div>
@@ -1258,19 +1246,6 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="ai-summary" id="revAiSummary"></div>
 <div class="ai-alerts" id="revAiAlerts"></div>
 </div>
-<!-- Delay Risk -->
-<!-- What-if -->
-<div class="ai-panel whatif-panel" id="revWhatifPanel" style="display:none">
-<div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#10B981,#059669)">&#9889;</div> What-if 시뮬레이션</div>
-<div class="whatif-controls">
-<label>집행 속도 조정</label>
-<input type="range" id="revWhatifSlider" min="50" max="150" value="100" step="5" oninput="updateWhatif('rev')">
-<span id="revWhatifPctLabel" class="whatif-pct-label">100%</span>
-</div>
-<div class="ai-summary" id="revWhatifSummary"></div>
-<div class="whatif-chart-wrap"><canvas id="chRevWhatif" style="max-height:200px"></canvas></div>
-<div id="revWhatifMessage" class="whatif-message"></div>
-</div>
 <div class="ai-panel realloc-panel" id="revReallocPanel" style="display:none">
 <div class="ai-header"><div class="ai-icon" style="background:linear-gradient(135deg,#7C3AED,#6D28D9)">&#8644;</div> 예산 재배분 추천 (손익)</div>
 <div class="ai-summary" id="revReallocSummary"></div>
@@ -1291,6 +1266,20 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </div>
 <div class="modal-body"><pre id="reportText"></pre></div>
 </div>
+</div>
+
+<!-- ═══ 서버 로그 ═══ -->
+<div class="server-log-panel">
+<details id="logDetails">
+<summary class="log-toggle">서버 로그 <span id="logCount" style="font-size:10px;color:var(--text3)"></span></summary>
+<div class="log-body">
+<div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:6px">
+<button class="log-btn" onclick="fetchLogs()">새로고침</button>
+<button class="log-btn" onclick="document.getElementById('logContent').textContent=''">지우기</button>
+</div>
+<pre id="logContent" class="log-content"></pre>
+</div>
+</details>
 </div>
 
 <script>
@@ -1352,7 +1341,7 @@ async function doRefresh(){
     document.getElementById('reportBtn').style.display='none';
     document.getElementById('fn').textContent='';
     ['cap','rev'].forEach(p=>{
-        ['AiPanel','WhatifPanel','ReallocPanel'].forEach(s=>{
+        ['AiPanel','ReallocPanel'].forEach(s=>{
             const el=document.getElementById(p+s);if(el)el.style.display='none';
         });
     });
@@ -1370,7 +1359,7 @@ function clr(v){return v<0?'neg':'pos'}
 function niceMax(v){if(v<=0)return 100;const t=v*1.15;if(t<=100)return Math.ceil(t/50)*50;return Math.ceil(t/200)*200}
 function _ch(id,type,data,opts={}){if(CH[id])CH[id].destroy();CH[id]=new Chart(document.getElementById(id),{type,data,options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:11}}}},...opts}})}
 
-function renderAll(){if(!D)return;renderCapital();renderRevenue();renderProjects();renderAI();renderEarlyExec();renderWhatif();renderReallocation()}
+function renderAll(){if(!D)return;renderCapital();renderRevenue();renderProjects();renderAI();renderEarlyExec();renderReallocation()}
 
 // ═══════════════════════════════════════
 // 투자비 조기집행 분석
@@ -1395,7 +1384,12 @@ function renderEarlyExec(){
     if(totalBudget<=0){body.innerHTML='<div style="font-size:12px;color:#92400E;text-align:center;padding:8px">배정예산을 먼저 입력하세요</div>';return}
 
     let html='';
-    // 전체 요약
+    // 현재 집행율 (배정예산 대비)
+    const currentRate=totalBudget>0?+(totalExec/totalBudget*100).toFixed(1):0;
+    html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin-bottom:8px;background:#F0F9FF;border-radius:6px;font-size:12px;color:#0C4A6E">`;
+    html+=`<span>현재 집행율 (배정예산 대비)</span><b style="font-size:14px">${currentRate}%</b>`;
+    html+=`</div>`;
+    // 조기집행 목표 요약
     const barPct=Math.min(100,achievedPct);
     const barColor=achievedPct>=100?'var(--green)':achievedPct>=70?'var(--amber)':'var(--red)';
     const statusText=achievedPct>=100?'목표 달성':isOverdue?'기한 초과':'진행중';
@@ -1521,87 +1515,7 @@ document.getElementById('reportModal').addEventListener('click',function(e){if(e
 // ═══════════════════════════════════════
 
 // ═══════════════════════════════════════
-// Feature 3: What-if 시뮬레이션
-// ═══════════════════════════════════════
-function renderWhatif(){
-    if(!D||!D.ai_analysis)return;
-    _initWhatif('cap','capital');
-    _initWhatif('rev','revenue');
-}
-function _initWhatif(prefix,dataKey){
-    const ai=D.ai_analysis[dataKey];
-    if(!ai||!ai.whatif)return;
-    if(ai.whatif.total_budget<=0){document.getElementById(prefix+'WhatifPanel').style.display='none';return}
-    document.getElementById(prefix+'WhatifPanel').style.display='block';
-    document.getElementById(prefix+'WhatifSlider').value=100;
-    document.getElementById(prefix+'WhatifPctLabel').textContent='100%';
-    updateWhatif(prefix);
-}
-function updateWhatif(prefix){
-    const dataKey=prefix==='cap'?'capital':'revenue';
-    const ai=D.ai_analysis[dataKey];
-    if(!ai||!ai.whatif)return;
-    const wi=ai.whatif;
-    const slider=document.getElementById(prefix+'WhatifSlider');
-    const pctLabel=document.getElementById(prefix+'WhatifPctLabel');
-    const summaryEl=document.getElementById(prefix+'WhatifSummary');
-    const msgEl=document.getElementById(prefix+'WhatifMessage');
-    const factor=parseInt(slider.value)/100;
-    pctLabel.textContent=slider.value+'%';
-    const adjustedRate=wi.monthly_rate*factor;
-    const remainExec=adjustedRate*wi.remaining_months;
-    const projYE=wi.total_exec+remainExec;
-    const projRate=wi.total_budget>0?+(projYE/wi.total_budget*100).toFixed(1):0;
-    const need90=(wi.target_90-wi.total_exec)/Math.max(1,wi.remaining_months);
-    const need100=(wi.total_budget-wi.total_exec)/Math.max(1,wi.remaining_months);
-    let html='';
-    html+='<div class="ai-stat"><div class="ai-label">조정 월집행액</div><div class="ai-value">'+(adjustedRate/1e8).toFixed(2)+'억</div><div class="ai-sub">기존 '+(wi.monthly_rate/1e8).toFixed(2)+'억 x '+slider.value+'%</div></div>';
-    html+='<div class="ai-stat"><div class="ai-label">예상 연말 집행</div><div class="ai-value" style="color:'+(projRate>100?'var(--red)':projRate>90?'var(--green)':'#F59E0B')+'">'+(projYE/1e8).toFixed(1)+'억</div><div class="ai-sub">예상집행율 '+projRate+'%</div></div>';
-    html+='<div class="ai-stat"><div class="ai-label">90% 달성 필요</div><div class="ai-value">'+(wi.remaining_months>0?(need90/1e8).toFixed(2)+'억/월':'-')+'</div><div class="ai-sub">'+wi.remaining_months+'개월 남음</div></div>';
-    html+='<div class="ai-stat"><div class="ai-label">100% 달성 필요</div><div class="ai-value">'+(wi.remaining_months>0?(need100/1e8).toFixed(2)+'억/월':'-')+'</div><div class="ai-sub">배정예산 완전소진</div></div>';
-    summaryEl.innerHTML=html;
-    // 미니 차트
-    const lb=[];const curL=[];const adjL=[];const bL=[];
-    for(let m=1;m<=12;m++){
-        lb.push(m+'월');
-        if(m<=wi.current_month){
-            const v=+(wi.total_exec*m/wi.current_month/1e8).toFixed(2);
-            curL.push(v);adjL.push(v);
-        }else{
-            curL.push(+((wi.total_exec+wi.monthly_rate*(m-wi.current_month))/1e8).toFixed(2));
-            adjL.push(+((wi.total_exec+adjustedRate*(m-wi.current_month))/1e8).toFixed(2));
-        }
-        bL.push(+(wi.total_budget/1e8).toFixed(2));
-    }
-    const cid=prefix==='cap'?'chCapWhatif':'chRevWhatif';
-    _ch(cid,'line',{labels:lb,datasets:[
-        {label:'배정예산',data:bL,borderColor:'rgba(59,130,246,0.5)',borderDash:[6,3],borderWidth:1.5,pointRadius:0,fill:false},
-        {label:'현재페이스',data:curL,borderColor:'rgba(148,163,184,0.6)',borderWidth:1.5,borderDash:[4,2],pointRadius:0,fill:false},
-        {label:'조정 후',data:adjL,borderColor:'rgba(16,185,129,1)',borderWidth:2.5,pointRadius:2,pointBackgroundColor:'rgba(16,185,129,1)',fill:false}
-    ]},{animation:{duration:0},scales:{y:{beginAtZero:true,title:{display:true,text:'억원'},ticks:{font:{size:9}}},x:{ticks:{font:{size:9}}}},
-        plugins:{legend:{position:'bottom',labels:{font:{size:9},usePointStyle:true}}}});
-    // 메시지
-    let msg='';let msgCls='';
-    if(projRate>=95&&projRate<=105){msg='현재 속도의 '+slider.value+'%로 집행 시, 연말 집행율 '+projRate+'% 예상. 적정 수준입니다.';msgCls='whatif-msg-ok';}
-    else if(projRate>105){msg='예산 초과 위험! 연말 '+projRate+'% 집행 예상. 속도를 줄여야 합니다.';msgCls='whatif-msg-danger';}
-    else if(projRate>=80){msg='연말 집행율 '+projRate+'% 예상. 목표 달성을 위해 속도 조정을 검토하세요.';msgCls='whatif-msg-warn';}
-    else{msg='연말 집행율 '+projRate+'% 예상. 집행 부진 우려. 하반기 집중 집행이 필요합니다.';msgCls='whatif-msg-danger';}
-    if(prefix==='cap'){
-        const earlyPct=parseInt(document.getElementById('capTargetPct').value)||60;
-        const earlyMonth=parseInt(document.getElementById('capTargetMonth').value)||6;
-        const earlyTarget=wi.total_budget*earlyPct/100;
-        if(wi.total_exec<earlyTarget&&wi.current_month<=earlyMonth){
-            const mToT=earlyMonth-wi.current_month;
-            const needPM=(earlyTarget-wi.total_exec)/Math.max(1,mToT);
-            msg+=adjustedRate>=needPM?' | 조기집행 '+earlyPct+'% 달성 가능':' | 조기집행 '+earlyPct+'% 미달 예상 (월 '+(needPM/1e8).toFixed(2)+'억 필요)';
-        }
-    }
-    msgEl.className='whatif-message '+msgCls;
-    msgEl.innerHTML=msg;
-}
-
-// ═══════════════════════════════════════
-// Feature 6: 예산 재배분 추천
+// 예산 재배분 추천
 // ═══════════════════════════════════════
 function renderReallocation(){
     if(!D||!D.ai_analysis)return;
@@ -1685,10 +1599,8 @@ function renderCapital(){
     comp.forEach((r,i)=>{
         const a=r['배정예산'],b=r['소비금액'],c=r['약정금액'],d=r['집행실적'],e=r['잔액'],f=r['진행중공사비'],g=r['예상집행'],ga=r['예상잔액'],dr=r['집행율'],gr=r['예상집행율'];
         const tr=document.createElement('tr');
-        const codeCell=`<td class="dbl-code" ondblclick="startEditCode(this,'capital',${i})">${r['사업코드']||''}</td>`;
-        const nameCell=r._custom
-            ?`<td><input class="inp-code" type="text" value="${r['예산과목']}" placeholder="사업명" onchange="D.capital.budget_comparison[${i}]['예산과목']=this.value"></td>`
-            :`<td>${r['예산과목']}</td>`;
+        const codeCell=`<td class="dbl-code" ondblclick="startEditCell(this,'capital',${i},'사업코드','사업코드')">${r['사업코드']||''}</td>`;
+        const nameCell=`<td class="dbl-code" ondblclick="startEditCell(this,'capital',${i},'예산과목','사업명')">${r['예산과목']||''}</td>`;
         tr.innerHTML=codeCell+nameCell+`
             <td><input class="inp-budget" type="text" data-section="cap" data-idx="${i}" value="${fw(a)}" onchange="recalcBudget(this)"></td>
             <td>${fw(b)}</td><td>${fw(c)}</td><td>${fw(d)}</td>
@@ -1719,10 +1631,8 @@ function renderRevenue(){
     comp.forEach((r,i)=>{
         const a=r['배정예산'],b=r['소비금액'],c=r['약정금액'],d=r['집행실적'],e=r['잔액'],f=r['진행중공사비'],g=r['예상집행'],ga=r['예상잔액'],dr=r['집행율'],gr=r['예상집행율'];
         const tr=document.createElement('tr');
-        const codeCell=`<td class="dbl-code" ondblclick="startEditCode(this,'revenue',${i})">${r['사업코드']||''}</td>`;
-        const nameCell=r._custom
-            ?`<td><input class="inp-code" type="text" value="${r['예산과목']}" placeholder="사업명" onchange="D.revenue.budget_comparison[${i}]['예산과목']=this.value"></td>`
-            :`<td>${r['예산과목']}</td>`;
+        const codeCell=`<td class="dbl-code" ondblclick="startEditCell(this,'revenue',${i},'사업코드','사업코드')">${r['사업코드']||''}</td>`;
+        const nameCell=`<td class="dbl-code" ondblclick="startEditCell(this,'revenue',${i},'예산과목','사업명')">${r['예산과목']||''}</td>`;
         tr.innerHTML=codeCell+nameCell+`
             <td><input class="inp-budget" type="text" data-section="rev" data-idx="${i}" value="${fw(a)}" onchange="recalcBudget(this)"></td>
             <td>${fw(b)}</td><td>${fw(c)}</td><td>${fw(d)}</td>
@@ -1736,23 +1646,23 @@ function renderRevenue(){
 // ═══════════════════════════════════════
 // 사업코드 더블클릭 인라인 편집
 // ═══════════════════════════════════════
-function startEditCode(td, dataKey, idx){
+function startEditCell(td, dataKey, idx, field, placeholder){
     const prev=td.textContent.trim();
     td.classList.remove('dbl-code');
     td.ondblclick=null;
     const inp=document.createElement('input');
     inp.className='inp-code';
     inp.value=prev;
-    inp.placeholder='사업코드';
+    inp.placeholder=placeholder||field;
     td.textContent='';
     td.appendChild(inp);
     inp.focus();inp.select();
     function commit(){
         const val=inp.value.trim();
-        D[dataKey].budget_comparison[idx]['사업코드']=val;
+        D[dataKey].budget_comparison[idx][field]=val;
         td.textContent=val;
         td.classList.add('dbl-code');
-        td.ondblclick=()=>startEditCode(td,dataKey,idx);
+        td.ondblclick=()=>startEditCell(td,dataKey,idx,field,placeholder);
     }
     inp.addEventListener('blur',commit);
     inp.addEventListener('keydown',e=>{if(e.key==='Enter'){inp.blur();}if(e.key==='Escape'){inp.value=prev;inp.blur();}});
@@ -1786,8 +1696,8 @@ function saveBudgets(sec){
     });
     updateTotals(sec);
     updateSummaryCards(sec);
-    if(sec==='cap'){renderEarlyExec();renderCapitalChart();renderWhatif();renderReallocation()}
-    else{renderRevenueChart();renderWhatif();renderReallocation()}
+    if(sec==='cap'){renderEarlyExec();renderCapitalChart();renderReallocation()}
+    else{renderRevenueChart();renderReallocation()}
     // 서버에 저장 (기본항목 금액 + 사용자추가 항목 전체)
     const saveData={capital:{budgets:{},custom_items:[]},revenue:{budgets:{},custom_items:[]}};
     ['capital','revenue'].forEach(k=>{
@@ -1944,6 +1854,20 @@ function setupPT(rows,tId,srchId,filtId,catKey,dK,pK,eK){
     document.getElementById(filtId).addEventListener('change',e=>render(e.target.value,document.getElementById(srchId).value));
 }
 
+// ═══════════════════════════════════════
+// 서버 로그
+// ═══════════════════════════════════════
+async function fetchLogs(){
+    try{
+        const r=await fetch('/api/logs');const j=await r.json();
+        const el=document.getElementById('logContent');
+        el.textContent=j.logs.join('\n');
+        document.getElementById('logCount').textContent='('+j.logs.length+'건)';
+        el.scrollTop=el.scrollHeight;
+    }catch(e){}
+}
+document.getElementById('logDetails').addEventListener('toggle',function(){if(this.open)fetchLogs()});
+
 window.addEventListener('DOMContentLoaded',async()=>{
     const now=new Date();const y=now.getFullYear();const m=String(now.getMonth()+1).padStart(2,'0');const d=String(now.getDate()).padStart(2,'0');const wd=['일','월','화','수','목','금','토'][now.getDay()];
     document.getElementById('today').textContent=y+'.'+m+'.'+d+' ('+wd+')';
@@ -2076,7 +2000,9 @@ def api_save_budgets():
 
 @app.route('/api/analyze', methods=['POST'])
 def api_analyze():
+    _log('파일 업로드 요청')
     if 'file' not in request.files:
+        _log('파일 없음')
         return jsonify({'error': '파일이 없습니다.'}), 400
     f = request.files['file']
     if f.filename == '':
@@ -2085,20 +2011,24 @@ def api_analyze():
     filepath = os.path.join(UPLOAD_FOLDER, f.filename)
     f.save(filepath)
     LAST_FILE = filepath
+    _log(f'파일 저장: {f.filename}')
     try:
         result = parse_and_analyze(filepath)
+        _log(f"파싱 완료: 프로젝트 {len(result.get('projects',[]))}건")
         saved = _load_saved_budgets()
         _apply_saved_budgets(result['capital']['budget_comparison'], 'capital', saved)
         _apply_saved_budgets(result['revenue']['budget_comparison'], 'revenue', saved)
-        # 배정예산 적용 후 AI 분석 수행
         cap_comp = result['capital']['budget_comparison']
         rev_comp = result['revenue']['budget_comparison']
-        result['ai_analysis']['capital']['whatif'] = _whatif_baseline(cap_comp, BUDGET_CAPITAL)
-        result['ai_analysis']['revenue']['whatif'] = _whatif_baseline(rev_comp, BUDGET_REVENUE)
         result['ai_analysis']['capital']['reallocation'] = _reallocation_recommendations(cap_comp)
         result['ai_analysis']['revenue']['reallocation'] = _reallocation_recommendations(rev_comp)
+        cap_yakjung = sum(c['약정금액'] for c in cap_comp)
+        rev_yakjung = sum(c['약정금액'] for c in rev_comp)
+        _log(f'약정금액 - 자본: {cap_yakjung:,.0f} / 손익: {rev_yakjung:,.0f}')
+        _log('분석 완료, 응답 전송')
         return jsonify(result)
     except Exception as e:
+        _log(f'분석 오류: {str(e)}')
         return jsonify({'error': f'분석 오류: {str(e)}'}), 500
 
 
@@ -2128,13 +2058,16 @@ def api_refresh():
         # 배정예산 적용 후 AI 분석 수행
         cap_comp = result['capital']['budget_comparison']
         rev_comp = result['revenue']['budget_comparison']
-        result['ai_analysis']['capital']['whatif'] = _whatif_baseline(cap_comp, BUDGET_CAPITAL)
-        result['ai_analysis']['revenue']['whatif'] = _whatif_baseline(rev_comp, BUDGET_REVENUE)
         result['ai_analysis']['capital']['reallocation'] = _reallocation_recommendations(cap_comp)
         result['ai_analysis']['revenue']['reallocation'] = _reallocation_recommendations(rev_comp)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/logs')
+def api_logs():
+    return jsonify({'logs': list(SERVER_LOGS)})
 
 
 if __name__ == '__main__':
