@@ -1016,7 +1016,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <span class="sp" id="sp"></span>
 <span id="fn" style="font-size:11px;opacity:.8"></span>
 <span id="today" style="font-size:11px;opacity:.8"></span>
-<button class="ubtn" onclick="openGuide()">? 사용법</button>
+<button class="ubtn" onclick="openGuide()">사용법</button>
 <button class="ubtn" id="refreshBtn" onclick="doRefresh()">&#8635; 새로고침</button>
 <label class="ubtn ubtn-primary">파일 업로드<input type="file" id="fi" accept=".xlsx,.xls" style="display:none"></label>
 </div>
@@ -1789,7 +1789,7 @@ async function fetchLogs(){
     try{
         const r=await fetch('/api/logs');const j=await r.json();
         const el=document.getElementById('logContent');
-        el.textContent=j.logs.join('\n');
+        el.textContent=j.logs.join(String.fromCharCode(10));
         document.getElementById('logCount').textContent='('+j.logs.length+'건)';
         el.scrollTop=el.scrollHeight;
     }catch(e){}
