@@ -22,7 +22,7 @@ DEFAULT_OFFICES = [
     '거창', '창녕', '합천', '진해', '하동', '고성', '산청', '남해', '함양'
 ]
 HQ_NAME = '경남본부'
-HQ_PASSWORD = 'admin'  # 본부 접속 비밀번호 (필요시 변경)
+HQ_PASSWORD = 'admin'  # 본부 접속 비밀번호
 
 def _get_offices():
     fp = os.path.join(DATA_DIR, 'offices.json')
@@ -1059,14 +1059,11 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </head>
 <body>
 <header>
-<h1>배전공사 예산 관리 시스템
-<span id="officeIndicator" style="font-size:13px;font-weight:400;background:rgba(255,255,255,.2);padding:3px 10px;border-radius:4px;margin-left:8px"></span>
-</h1>
+<h1>배전공사 예산 관리 시스템</h1>
 <div class="rt">
 <span class="sp" id="sp"></span>
 <span id="fn" style="font-size:11px;opacity:.8"></span>
 <span id="today" style="font-size:11px;opacity:.8"></span>
-<button class="ubtn" onclick="changeOffice()" style="font-size:10px">지사 변경</button>
 <button class="ubtn" onclick="openGuide()">사용법</button>
 <button class="ubtn" id="refreshBtn" onclick="doRefresh()">&#8635; 새로고침</button>
 <label class="ubtn ubtn-primary">파일 업로드<input type="file" id="fi" accept=".xlsx,.xls" style="display:none"></label>
@@ -1086,7 +1083,6 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="main-tabs">
 <button class="mt cap" id="mtCap" onclick="switchMain('cap')">자본</button>
 <button class="mt rev off" id="mtRev" onclick="switchMain('rev')">손익</button>
-<button class="mt off" id="mtHQ" onclick="switchMain('hq')" style="background:#7C3AED;color:#fff">본부</button>
 </div>
 
 <!-- ═══ 자본 ═══ -->
@@ -1210,57 +1206,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </div>
 </div>
 
-<!-- ═══ 본부 현황 ═══ -->
-<div class="main-pane" id="mpHQ">
-<div class="cards">
-<div class="cd c1"><div class="lb">등록 지사</div><div class="vl" id="hqOfficeCount">-</div><div class="sb">데이터 등록 / 전체</div></div>
-<div class="cd c2"><div class="lb">자본 배정예산 합계</div><div class="vl" id="hqCapBudget">-</div><div class="sb">전 지사 합산</div></div>
-<div class="cd c5"><div class="lb">자본 집행율</div><div class="vl" id="hqCapRate">-</div><div class="sb">전 지사 평균</div></div>
-<div class="cd c3"><div class="lb">손익 배정예산 합계</div><div class="vl" id="hqRevBudget">-</div><div class="sb">전 지사 합산</div></div>
-</div>
-<div class="stabs">
-<button class="st on" onclick="subTabHQ(this,'hqCapP')">자본 비교</button>
-<button class="st" onclick="subTabHQ(this,'hqRevP')">손익 비교</button>
-</div>
-<div class="sp2 on" id="hqCapP">
-<div class="tb"><h3>지사별 자본 예산 현황</h3>
-<div style="text-align:right;margin-bottom:6px"><button class="ubtn" onclick="loadHQData()" style="font-size:11px;padding:4px 12px">&#8635; 새로고침</button></div>
-<div class="sc"><table id="tHQCap">
-<thead><tr><th>지사</th><th>배정예산(A)</th><th>집행실적(D)</th><th>잔액(E)</th><th>집행율</th><th>진행중(F)</th><th>최종예상(G)</th><th>예상집행율</th><th>최종저장</th></tr></thead>
-<tbody></tbody>
-<tfoot><tr id="hqCapTotalRow"><td>합계</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td></td></tr></tfoot>
-</table></div></div>
-</div>
-<div class="sp2" id="hqRevP">
-<div class="tb"><h3>지사별 손익 예산 현황</h3>
-<div style="text-align:right;margin-bottom:6px"><button class="ubtn" onclick="loadHQData()" style="font-size:11px;padding:4px 12px">&#8635; 새로고침</button></div>
-<div class="sc"><table id="tHQRev">
-<thead><tr><th>지사</th><th>배정예산(A)</th><th>집행실적(D)</th><th>잔액(E)</th><th>집행율</th><th>진행중(F)</th><th>최종예상(G)</th><th>예상집행율</th><th>최종저장</th></tr></thead>
-<tbody></tbody>
-<tfoot><tr id="hqRevTotalRow"><td>합계</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td></td></tr></tfoot>
-</table></div></div>
-</div>
-</div>
-
 </div><!-- /dashboardContent -->
-
-<!-- ═══ 지사 선택 모달 ═══ -->
-<div class="modal-overlay" id="officeModal" onclick="if(event.target===this)this.classList.remove('on')">
-<div class="modal-box" style="max-width:520px">
-<div class="modal-head"><h2>소속 지사 선택</h2><div class="modal-actions"><button class="btn-close" onclick="document.getElementById('officeModal').classList.remove('on')">닫기</button></div></div>
-<div class="modal-body" style="padding:24px">
-<p style="margin-bottom:16px;color:var(--text2);font-size:13px">소속 지사를 선택해주세요. 선택한 지사는 브라우저에 저장됩니다.</p>
-<div id="officeList" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px"></div>
-<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
-<div style="display:flex;gap:6px">
-<input type="password" id="hqPwInput" placeholder="본부 비밀번호" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
-<button class="ubtn" style="padding:10px 16px;background:#7C3AED;color:#fff;border-color:#7C3AED;font-size:13px;white-space:nowrap" id="btnHQLogin">본부 접속</button>
-</div>
-<div id="hqPwError" style="display:none;color:#e74c3c;font-size:11px;margin-top:6px">비밀번호가 틀렸습니다.</div>
-</div>
-</div>
-</div>
-</div>
 
 <!-- ═══ 사용법 모달 ═══ -->
 <div class="modal-overlay" id="guideModal">
@@ -1328,18 +1274,13 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </div>
 
 <script>
-let D=null,CH={},CURRENT_OFFICE='';
-
-function getCookie(n){const v=document.cookie.match('(^|;)\\s*'+n+'\\s*=\\s*([^;]+)');return v?decodeURIComponent(v.pop()):''}
-function setCookie(n,v,d){const dt=new Date();dt.setTime(dt.getTime()+d*86400000);document.cookie=n+'='+encodeURIComponent(v)+';expires='+dt.toUTCString()+';path=/'}
-function apiUrl(p){const s=p.includes('?')?'&':'?';return p+s+'office='+encodeURIComponent(CURRENT_OFFICE)}
+let D=null,CH={};
 
 function switchMain(t){
     document.querySelectorAll('.mt').forEach(b=>b.classList.add('off'));
     document.querySelectorAll('.main-pane').forEach(p=>p.classList.remove('on'));
     if(t==='cap'){document.getElementById('mtCap').classList.remove('off');document.getElementById('mpCap').classList.add('on')}
     else if(t==='rev'){document.getElementById('mtRev').classList.remove('off');document.getElementById('mpRev').classList.add('on')}
-    else if(t==='hq'){document.getElementById('mtHQ').classList.remove('off');document.getElementById('mpHQ').classList.add('on');loadHQData()}
 }
 
 function subTab(prefix,btn,pane){
@@ -1363,7 +1304,7 @@ document.getElementById('fi').addEventListener('change',async e=>{
             });
         });
     }
-    const fd=new FormData();fd.append('file',f);fd.append('office',CURRENT_OFFICE);
+    const fd=new FormData();fd.append('file',f);
     try{const r=await fetch('/api/analyze',{method:'POST',body:fd});const j=await r.json();if(j.error){alert(j.error);document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';return}D=j;
         // 배정예산 복원
         ['capital','revenue'].forEach(dk=>{
@@ -1387,7 +1328,7 @@ document.getElementById('fi').addEventListener('change',async e=>{
 });
 
 async function doRefresh(){
-    try{await fetch(apiUrl('/api/reset'));}catch(e){}
+    try{await fetch('/api/reset');}catch(e){}
     document.getElementById('fn').textContent='';
     document.getElementById('fi').value='';
     ['cap','rev'].forEach(p=>{
@@ -1395,7 +1336,7 @@ async function doRefresh(){
             const el=document.getElementById(p+s);if(el)el.style.display='none';
         });
     });
-    try{const r=await fetch(apiUrl('/api/init'));const j=await r.json();D=j;renderAll();updateSummaryCards('cap');updateSummaryCards('rev');}catch(e){}
+    try{const r=await fetch('/api/init');const j=await r.json();D=j;renderAll();updateSummaryCards('cap');updateSummaryCards('rev');}catch(e){}
 }
 
 const fm=v=>(v/1e6).toLocaleString('ko-KR',{maximumFractionDigits:0})+' 백만';
@@ -1736,12 +1677,7 @@ function saveBudgets(sec){
     if(sec==='cap'){renderEarlyExec();renderCapitalChart();renderReallocation()}
     else{renderRevenueChart();renderReallocation()}
     // 서버에 저장 (기본항목 금액 + 사용자추가 항목 전체 + 분석 스냅샷)
-    const saveData={office:CURRENT_OFFICE,capital:{budgets:{},custom_items:[]},revenue:{budgets:{},custom_items:[]},
-        analysis_snapshot:{
-            capital:{summary:D.capital.summary,budget_comparison:D.capital.budget_comparison},
-            revenue:{summary:D.revenue.summary,budget_comparison:D.revenue.budget_comparison},
-            projects_count:D.projects?D.projects.length:0
-        }};
+    const saveData={capital:{budgets:{},custom_items:[]},revenue:{budgets:{},custom_items:[]}};
     ['capital','revenue'].forEach(k=>{
         saveData[k].codes={};
         (D[k].budget_comparison||[]).forEach(r=>{
@@ -1754,7 +1690,7 @@ function saveBudgets(sec){
         });
     });
     const btn=event.target;
-    fetch(apiUrl('/api/save-budgets'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(saveData)})
+    fetch('/api/save-budgets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(saveData)})
     .then(r=>r.json()).then(j=>{
         if(j.ok){btn.textContent='저장됨!';btn.style.background='var(--green)';btn.style.borderColor='var(--green)';}
         else{btn.textContent='저장실패';btn.style.background='#e74c3c';btn.style.borderColor='#e74c3c';}
@@ -1910,105 +1846,10 @@ async function fetchLogs(){
 }
 document.getElementById('logDetails').addEventListener('toggle',function(){if(this.open)fetchLogs()});
 
-// ═══════════════════════════════════════
-// 지사 선택
-// ═══════════════════════════════════════
-async function initOffice(){
-    CURRENT_OFFICE=getCookie('budget_office');
-    if(CURRENT_OFFICE){
-        document.getElementById('officeIndicator').textContent=CURRENT_OFFICE;
-        return true;
-    }
-    const r=await fetch('/api/offices');const j=await r.json();
-    const list=document.getElementById('officeList');list.innerHTML='';
-    j.offices.forEach(name=>{
-        const btn=document.createElement('button');
-        btn.className='ubtn';btn.style.cssText='padding:10px;font-size:13px;border-color:var(--navy2);color:var(--navy2)';
-        btn.textContent=name;
-        btn.onclick=()=>selectOffice(name);
-        list.appendChild(btn);
-    });
-    document.getElementById('btnHQLogin').onclick=()=>loginHQ();
-    document.getElementById('hqPwInput').addEventListener('keydown',e=>{if(e.key==='Enter')loginHQ()});
-    document.getElementById('officeModal').classList.add('on');
-    return false;
-}
-function selectOffice(name){
-    CURRENT_OFFICE=name;
-    setCookie('budget_office',name,365);
-    document.getElementById('officeModal').classList.remove('on');
-    document.getElementById('officeIndicator').textContent=name;
-    if(name==='본부'){switchMain('hq')}
-    loadInitData();
-}
-async function loginHQ(){
-    const pw=document.getElementById('hqPwInput').value;
-    const errEl=document.getElementById('hqPwError');
-    try{
-        const r=await fetch('/api/hq-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
-        if(r.ok){errEl.style.display='none';selectOffice('본부')}
-        else{errEl.style.display='block';document.getElementById('hqPwInput').focus()}
-    }catch(e){errEl.style.display='block'}
-}
-function changeOffice(){
-    setCookie('budget_office','',-1);
-    CURRENT_OFFICE='';
-    initOffice();
-}
-async function loadInitData(){
-    try{const r=await fetch(apiUrl('/api/init'));const j=await r.json();D=j;renderAll()}catch(e){}
-}
-
-// ═══════════════════════════════════════
-// 본부 탭 (HQ)
-// ═══════════════════════════════════════
-let HQ_DATA=null;
-function subTabHQ(btn,pane){
-    btn.closest('.stabs').querySelectorAll('.st').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
-    document.getElementById('mpHQ').querySelectorAll('.sp2').forEach(p=>p.classList.remove('on'));
-    document.getElementById(pane).classList.add('on');
-}
-async function loadHQData(){
-    try{const r=await fetch('/api/hq-summary');HQ_DATA=await r.json();renderHQ()}catch(e){}
-}
-function renderHQ(){
-    if(!HQ_DATA)return;
-    const offices=HQ_DATA.offices;
-    const withData=offices.filter(o=>o.saved_at);
-    document.getElementById('hqOfficeCount').textContent=withData.length+' / '+offices.length;
-    const capTotal=offices.reduce((s,o)=>s+((o.capital.summary||{})['배정예산']||0),0);
-    const capExec=offices.reduce((s,o)=>s+((o.capital.summary||{})['집행실적']||0),0);
-    const revTotal=offices.reduce((s,o)=>s+((o.revenue.summary||{})['배정예산']||0),0);
-    document.getElementById('hqCapBudget').textContent=fm(capTotal);
-    document.getElementById('hqCapRate').textContent=capTotal?fp(capExec/capTotal*100):'-';
-    document.getElementById('hqRevBudget').textContent=fm(revTotal);
-    renderHQTable('capital','tHQCap','hqCapTotalRow');
-    renderHQTable('revenue','tHQRev','hqRevTotalRow');
-}
-function renderHQTable(dataKey,tableId,totalRowId){
-    const offices=HQ_DATA.offices;
-    const tb=document.querySelector('#'+tableId+' tbody');tb.innerHTML='';
-    let totA=0,totD=0,totE=0,totF=0,totG=0;
-    offices.forEach(o=>{
-        const s=(o[dataKey]||{}).summary||{};
-        const a=s['배정예산']||0,d=s['집행실적']||0,e=a-d;
-        const f=s['진행중공사비']||0,g=s['예상집행']||0;
-        const dr=a?+(d/a*100).toFixed(1):0,gr=a?+(g/a*100).toFixed(1):0;
-        totA+=a;totD+=d;totE+=e;totF+=f;totG+=g;
-        const tr=document.createElement('tr');
-        const saved=o.saved_at?new Date(o.saved_at).toLocaleDateString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'-';
-        tr.innerHTML='<td>'+o.office+'</td><td>'+(a?fw(a):'-')+'</td><td>'+(d?fw(d):'-')+'</td><td class="'+(a?clr(e):'')+'">'+(a?fw(e):'-')+'</td><td>'+(a?br(dr):'-')+'</td><td>'+(f?fw(f):'-')+'</td><td>'+(g?fw(g):'-')+'</td><td>'+(a?br(gr):'-')+'</td><td style="font-size:10px;color:var(--text3)">'+saved+'</td>';
-        tb.appendChild(tr);
-    });
-    const tDR=totA?+(totD/totA*100).toFixed(1):0,tGR=totA?+(totG/totA*100).toFixed(1):0;
-    document.getElementById(totalRowId).innerHTML='<td>합계</td><td>'+fw(totA)+'</td><td>'+fw(totD)+'</td><td class="'+clr(totE)+'">'+fw(totE)+'</td><td>'+br(tDR)+'</td><td>'+fw(totF)+'</td><td>'+fw(totG)+'</td><td>'+br(tGR)+'</td><td></td>';
-}
-
 window.addEventListener('DOMContentLoaded',async()=>{
     const now=new Date();const y=now.getFullYear();const m=String(now.getMonth()+1).padStart(2,'0');const d=String(now.getDate()).padStart(2,'0');const wd=['일','월','화','수','목','금','토'][now.getDay()];
     document.getElementById('today').textContent=y+'.'+m+'.'+d+' ('+wd+')';
-    const hasOffice=await initOffice();
-    if(hasOffice) loadInitData();
+    try{const r=await fetch('/api/init');const j=await r.json();D=j;renderAll()}catch(e){}
 });
 </script>
 </body>
@@ -2086,6 +1927,8 @@ def api_hq_login():
     if data.get('password') == HQ_PASSWORD:
         return jsonify({'ok': True})
     return jsonify({'ok': False}), 401
+
+
 
 
 @app.route('/api/hq-summary')
