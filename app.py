@@ -255,105 +255,7 @@ def _detect_anomalies(comparison, budget_dict):
     return anomalies
 
 
-def _generate_report(cap_comp, rev_comp, cap_pred, rev_pred, cap_anomalies, rev_anomalies,
-                     budget_cap, budget_rev):
-    """예산 현황 보고서 텍스트 생성"""
-    now = datetime.now()
-    date_str = now.strftime('%Y년 %m월 %d일')
-    month = now.month
-    elapsed_pct = round(month / 12 * 100, 1)
 
-    lines = []
-    lines.append('=' * 50)
-    lines.append('    배전공사 예산 집행 현황 보고서')
-    lines.append('=' * 50)
-    lines.append(f'기준일: {date_str} (연간 진행율 {elapsed_pct}%)')
-    lines.append('')
-
-    # 자본
-    tc_budget = sum(v[1] * 1e6 for v in budget_cap.values())
-    tc_exec = sum(r['집행실적'] for r in cap_comp)
-    tc_forecast = sum(r['예상집행'] for r in cap_comp)
-    tc_rate = round(tc_exec / tc_budget * 100, 1) if tc_budget else 0
-    tc_fc_rate = round(tc_forecast / tc_budget * 100, 1) if tc_budget else 0
-
-    lines.append('■ 자본예산 현황')
-    lines.append(f'  - 배정예산: {tc_budget / 1e8:.1f}억원')
-    lines.append(f'  - 집행실적: {tc_exec / 1e8:.1f}억원 (집행율 {tc_rate}%)')
-    lines.append(f'  - 예상집행: {tc_forecast / 1e8:.1f}억원 (예상집행율 {tc_fc_rate}%)')
-    if cap_pred:
-        avail = cap_pred.get("total_available", 0)
-        lines.append(f'  - 가용예산: {avail / 1e8:.1f}억원 (잔액 − 진행중공사비)')
-        pace = cap_pred.get("pace_gap", 0)
-        pace_lbl = '빠름' if pace > 5 else ('느림' if pace < -10 else '적정')
-        lines.append(f'  - 집행 진도: {pace_lbl} (집행율 {cap_pred.get("exec_rate",0)}% / 경과 {cap_pred.get("elapsed_pct",0)}%)')
-
-    # 자본 주요 항목
-    cap_over = [r for r in cap_comp if r['예상집행율'] > 90 and r['배정예산'] > 0]
-    if cap_over:
-        lines.append(f'  - 주의 항목 ({len(cap_over)}건):')
-        for r in cap_over:
-            lines.append(f'    * {r["예산과목"]}: 예상집행율 {r["예상집행율"]}%')
-    lines.append('')
-
-    # 손익
-    tr_budget = sum(v[1] * 1e6 for v in budget_rev.values())
-    tr_exec = sum(r['집행실적'] for r in rev_comp)
-    tr_forecast = sum(r['예상집행'] for r in rev_comp)
-    tr_rate = round(tr_exec / tr_budget * 100, 1) if tr_budget else 0
-    tr_fc_rate = round(tr_forecast / tr_budget * 100, 1) if tr_budget else 0
-
-    lines.append('■ 손익예산 현황')
-    lines.append(f'  - 배정예산: {tr_budget / 1e8:.1f}억원')
-    lines.append(f'  - 집행실적: {tr_exec / 1e8:.1f}억원 (집행율 {tr_rate}%)')
-    lines.append(f'  - 예상집행: {tr_forecast / 1e8:.1f}억원 (예상집행율 {tr_fc_rate}%)')
-    if rev_pred:
-        ravail = rev_pred.get("total_available", 0)
-        lines.append(f'  - 가용예산: {ravail / 1e8:.1f}억원 (잔액 − 진행중공사비)')
-        rpace = rev_pred.get("pace_gap", 0)
-        rpace_lbl = '빠름' if rpace > 5 else ('느림' if rpace < -10 else '적정')
-        lines.append(f'  - 집행 진도: {rpace_lbl} (집행율 {rev_pred.get("exec_rate",0)}% / 경과 {rev_pred.get("elapsed_pct",0)}%)')
-
-    rev_over = [r for r in rev_comp if r['예상집행율'] > 90 and r['배정예산'] > 0]
-    if rev_over:
-        lines.append(f'  - 주의 항목 ({len(rev_over)}건):')
-        for r in rev_over:
-            lines.append(f'    * {r["예산과목"]}: 예상집행율 {r["예상집행율"]}%')
-    lines.append('')
-
-    # 이상 탐지
-    all_anomalies = cap_anomalies + rev_anomalies
-    if all_anomalies:
-        lines.append(f'■ 이상 탐지 결과 ({len(all_anomalies)}건)')
-        level_label = {'danger': '위험', 'warning': '주의', 'info': '정보'}
-        for a in all_anomalies:
-            lbl = level_label.get(a['level'], '정보')
-            section = '자본' if a in cap_anomalies else '손익'
-            lines.append(f'  [{lbl}] [{section}] {a["category"]}: {a["message"]}')
-    else:
-        lines.append('■ 이상 탐지 결과: 특이사항 없음')
-    lines.append('')
-
-    # 종합 의견
-    lines.append('■ 종합 의견')
-    danger_cnt = sum(1 for a in all_anomalies if a['level'] == 'danger')
-    warning_cnt = sum(1 for a in all_anomalies if a['level'] == 'warning')
-    if danger_cnt > 0:
-        lines.append(f'  - 위험 항목 {danger_cnt}건 감지. 예산 초과 방지를 위한 긴급 점검 필요.')
-    if warning_cnt > 0:
-        lines.append(f'  - 주의 항목 {warning_cnt}건. 하반기 집행 계획 재검토 권고.')
-    if danger_cnt == 0 and warning_cnt == 0:
-        lines.append('  - 전체적으로 예산 집행이 정상 범위 내에 있습니다.')
-
-    remaining_months = 12 - month
-    if remaining_months > 0:
-        lines.append(f'  - 잔여 기간: {remaining_months}개월')
-
-    lines.append('')
-    lines.append('=' * 50)
-    lines.append(f'※ 본 보고서는 {date_str} 기준 자동 생성되었습니다.')
-
-    return '\n'.join(lines)
 
 
 # ──────────────────────────────────────────────
@@ -849,10 +751,6 @@ def parse_and_analyze(filepath):
     rev_pred = _predict_yearend(rev_comparison, BUDGET_REVENUE)
     cap_anomalies = _detect_anomalies(cap_comparison, BUDGET_CAPITAL)
     rev_anomalies = _detect_anomalies(rev_comparison, BUDGET_REVENUE)
-    report = _generate_report(cap_comparison, rev_comparison,
-                               cap_pred, rev_pred,
-                               cap_anomalies, rev_anomalies,
-                               BUDGET_CAPITAL, BUDGET_REVENUE)
     return {
         'capital': {
             'summary': cap_summary,
@@ -876,7 +774,6 @@ def parse_and_analyze(filepath):
             'revenue': {
                 'predictions': rev_pred, 'anomalies': rev_anomalies,
             },
-            'report': report,
         },
     }
 
@@ -1074,6 +971,14 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 .modal-head .btn-close{background:transparent}
 .modal-body{padding:20px;overflow-y:auto;flex:1}
 .modal-body pre{white-space:pre-wrap;word-break:break-all;font-family:'Malgun Gothic','Apple SD Gothic Neo',monospace;font-size:12px;line-height:1.8;color:var(--text)}
+.guide-body{padding:24px !important}
+.guide-section{margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid #F1F5F9}
+.guide-section:last-child{border-bottom:none;margin-bottom:0}
+.guide-section h3{font-size:13px;font-weight:700;color:var(--navy2);margin-bottom:6px}
+.guide-section p{font-size:12px;color:var(--text2);line-height:1.7;margin:2px 0}
+.guide-table{width:100%;font-size:12px;border-collapse:collapse;margin-top:6px}
+.guide-table td{padding:5px 10px;border:1px solid var(--border);color:var(--text)}
+.guide-table td:first-child{background:#F8FAFC;width:130px;white-space:nowrap}
 
 /* ── Early Execution Target ── */
 .early-exec{background:linear-gradient(135deg,#FFF7ED 0%,#FEF3C7 100%);border:1px solid #FDE68A;border-radius:10px;padding:16px 20px;margin:16px 0;position:relative;overflow:hidden}
@@ -1111,7 +1016,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <span class="sp" id="sp"></span>
 <span id="fn" style="font-size:11px;opacity:.8"></span>
 <span id="today" style="font-size:11px;opacity:.8"></span>
-<button class="ubtn" id="reportBtn" onclick="openReport()" style="display:none">&#128196; 보고서</button>
+<button class="ubtn" onclick="openGuide()">? 사용법</button>
 <button class="ubtn" id="refreshBtn" onclick="doRefresh()">&#8635; 새로고침</button>
 <label class="ubtn ubtn-primary">파일 업로드<input type="file" id="fi" accept=".xlsx,.xls" style="display:none"></label>
 </div>
@@ -1254,17 +1159,54 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </div>
 </div><!-- /dashboardContent -->
 
-<!-- ═══ 보고서 모달 ═══ -->
-<div class="modal-overlay" id="reportModal">
+<!-- ═══ 사용법 모달 ═══ -->
+<div class="modal-overlay" id="guideModal">
 <div class="modal-box">
 <div class="modal-head">
-<h2>예산 집행 현황 보고서</h2>
+<h2>사용법 안내</h2>
 <div class="modal-actions">
-<button class="btn-copy" onclick="copyReport()">복사</button>
-<button class="btn-close" onclick="closeReport()">닫기</button>
+<button class="btn-close" onclick="closeGuide()">닫기</button>
 </div>
 </div>
-<div class="modal-body"><pre id="reportText"></pre></div>
+<div class="modal-body guide-body">
+<div class="guide-section">
+<h3>1. 파일 업로드</h3>
+<p>우측 상단 <b>파일 업로드</b> 버튼으로 <b>공사관리대장조회 엑셀(.xlsx)</b> 파일을 업로드합니다.</p>
+<p>업로드 시 자본/손익별 예산 집행 현황이 자동으로 분석됩니다.</p>
+</div>
+<div class="guide-section">
+<h3>2. 배정예산 입력</h3>
+<p>예산현황 테이블의 <b>배정예산(A)</b> 열에 각 사업의 배정예산을 직접 입력합니다.</p>
+<p>입력 후 <b>배정예산 저장</b> 버튼을 누르면 다음 접속 시에도 유지됩니다.</p>
+</div>
+<div class="guide-section">
+<h3>3. 사업코드/사업명 수정</h3>
+<p>테이블의 <b>사업코드</b> 또는 <b>사업명</b> 셀을 <b>더블클릭</b>하면 인라인 편집이 가능합니다.</p>
+<p>Enter로 확정, Esc로 취소할 수 있습니다.</p>
+</div>
+<div class="guide-section">
+<h3>4. 투자비 조기집행 목표</h3>
+<p>자본 탭 상단에서 <b>목표 집행율(%)</b>과 <b>기한(월)</b>을 설정하면 달성 현황을 확인할 수 있습니다.</p>
+</div>
+<div class="guide-section">
+<h3>5. 항목 추가</h3>
+<p>테이블 하단의 <b>+ 항목 추가</b> 버튼으로 사업자가 직접 예산항목을 추가할 수 있습니다.</p>
+</div>
+<div class="guide-section">
+<h3>6. 새로고침 (초기화)</h3>
+<p><b>새로고침</b> 버튼을 누르면 업로드 데이터와 배정예산이 모두 초기화됩니다.</p>
+</div>
+<div class="guide-section">
+<h3>7. 주요 용어</h3>
+<table class="guide-table">
+<tr><td><b>소비금액(B)</b></td><td>기성 지급 완료된 금액</td></tr>
+<tr><td><b>약정금액(C)</b></td><td>사급재료비 (자본/손익 비례배분)</td></tr>
+<tr><td><b>집행실적(D)</b></td><td>B + C</td></tr>
+<tr><td><b>진행중공사비(F)</b></td><td>미준공 공사의 설계/약정 금액</td></tr>
+<tr><td><b>최종예상(G)</b></td><td>D + F (연말 예상 집행액)</td></tr>
+</table>
+</div>
+</div>
 </div>
 </div>
 
@@ -1331,14 +1273,13 @@ document.getElementById('fi').addEventListener('change',async e=>{
                 }
             });
         });
-        document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';document.getElementById('refreshBtn').style.display='inline-block';document.getElementById('reportBtn').style.display='inline-block';renderAll();updateSummaryCards('cap');updateSummaryCards('rev')}
+        document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';document.getElementById('refreshBtn').style.display='inline-block';renderAll();updateSummaryCards('cap');updateSummaryCards('rev')}
     catch(err){alert(err.message);document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block'}
 });
 
 async function doRefresh(){
     // 업로드 데이터 + 배정예산 전체 초기화
     try{await fetch('/api/reset');}catch(e){}
-    document.getElementById('reportBtn').style.display='none';
     document.getElementById('fn').textContent='';
     ['cap','rev'].forEach(p=>{
         ['AiPanel','ReallocPanel'].forEach(s=>{
@@ -1449,7 +1390,6 @@ function renderAIPanel(prefix,dataKey){
     const alertsEl=document.getElementById(prefix+'AiAlerts');
     const pred=ai.predictions;
     const anomalies=ai.anomalies;
-    document.getElementById('reportBtn').style.display='inline-block';
 
     // Summary stats
     let html='';
@@ -1490,23 +1430,11 @@ function renderAIPanel(prefix,dataKey){
 }
 
 // ═══════════════════════════════════════
-// 보고서 모달
+// 사용법 모달
 // ═══════════════════════════════════════
-function openReport(){
-    if(!D||!D.ai_analysis)return;
-    document.getElementById('reportText').textContent=D.ai_analysis.report;
-    document.getElementById('reportModal').classList.add('on');
-}
-function closeReport(){document.getElementById('reportModal').classList.remove('on')}
-function copyReport(){
-    const text=document.getElementById('reportText').textContent;
-    navigator.clipboard.writeText(text).then(()=>{
-        const btn=document.querySelector('.btn-copy');
-        btn.textContent='복사됨!';
-        setTimeout(()=>{btn.textContent='복사'},1500);
-    });
-}
-document.getElementById('reportModal').addEventListener('click',function(e){if(e.target===this)closeReport()});
+function openGuide(){document.getElementById('guideModal').classList.add('on')}
+function closeGuide(){document.getElementById('guideModal').classList.remove('on')}
+document.getElementById('guideModal').addEventListener('click',function(e){if(e.target===this)closeGuide()});
 
 // ═══════════════════════════════════════
 // Feature 1: 예산 소진 예측 곡선
@@ -1981,7 +1909,6 @@ def api_init():
         'ai_analysis': {
             'capital': {'predictions': [], 'anomalies': []},
             'revenue': {'predictions': [], 'anomalies': []},
-            'report': '',
         },
     })
 
