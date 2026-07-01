@@ -1,4 +1,8 @@
 __pycache__/
 uploads/
+data/*/uploads/
+data/*/budgets.json
+data/*/analysis.json
 ~$*
 *.pyc
+budgets.json

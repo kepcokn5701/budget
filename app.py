@@ -7,10 +7,58 @@ from collections import deque
 
 app = Flask(__name__)
 
-UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-LAST_FILE = None
-BUDGET_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'budgets.json')
+BUDGET_FILE = os.path.join(BASE_DIR, 'budgets.json')
+
+# ── 다중 지사 지원 ──
+DATA_DIR = os.path.join(BASE_DIR, 'data')
+os.makedirs(DATA_DIR, exist_ok=True)
+LAST_FILES = {}  # {office_name: filepath}
+
+DEFAULT_OFFICES = [
+    '직할', '진주', '마산', '거제', '밀양', '사천', '통영', '함안의령',
+    '거창', '창녕', '합천', '진해', '하동', '고성', '산청', '남해', '함양'
+]
+HQ_NAME = '경남본부'
+HQ_PASSWORD = 'admin'  # 본부 접속 비밀번호 (필요시 변경)
+
+def _get_offices():
+    fp = os.path.join(DATA_DIR, 'offices.json')
+    if os.path.exists(fp):
+        try:
+            with open(fp, 'r', encoding='utf-8') as f:
+                return json.load(f).get('offices', DEFAULT_OFFICES)
+        except Exception:
+            pass
+    return DEFAULT_OFFICES
+
+def _office_dir(office):
+    d = os.path.join(DATA_DIR, office)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _office_upload_dir(office):
+    d = os.path.join(_office_dir(office), 'uploads')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _office_budget_file(office):
+    return os.path.join(_office_dir(office), 'budgets.json')
+
+def _office_analysis_file(office):
+    return os.path.join(_office_dir(office), 'analysis.json')
+
+def _load_office_budgets(office):
+    fp = _office_budget_file(office)
+    if os.path.exists(fp):
+        try:
+            with open(fp, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
 
 # ── 서버 로그 수집 ──
 SERVER_LOGS = deque(maxlen=200)
@@ -1011,11 +1059,14 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </head>
 <body>
 <header>
-<h1>배전공사 예산 관리 시스템</h1>
+<h1>배전공사 예산 관리 시스템
+<span id="officeIndicator" style="font-size:13px;font-weight:400;background:rgba(255,255,255,.2);padding:3px 10px;border-radius:4px;margin-left:8px"></span>
+</h1>
 <div class="rt">
 <span class="sp" id="sp"></span>
 <span id="fn" style="font-size:11px;opacity:.8"></span>
 <span id="today" style="font-size:11px;opacity:.8"></span>
+<button class="ubtn" onclick="changeOffice()" style="font-size:10px">지사 변경</button>
 <button class="ubtn" onclick="openGuide()">사용법</button>
 <button class="ubtn" id="refreshBtn" onclick="doRefresh()">&#8635; 새로고침</button>
 <label class="ubtn ubtn-primary">파일 업로드<input type="file" id="fi" accept=".xlsx,.xls" style="display:none"></label>
@@ -1035,6 +1086,7 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div class="main-tabs">
 <button class="mt cap" id="mtCap" onclick="switchMain('cap')">자본</button>
 <button class="mt rev off" id="mtRev" onclick="switchMain('rev')">손익</button>
+<button class="mt off" id="mtHQ" onclick="switchMain('hq')" style="background:#7C3AED;color:#fff">본부</button>
 </div>
 
 <!-- ═══ 자본 ═══ -->
@@ -1157,7 +1209,58 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 <div id="revReallocBody"></div>
 </div>
 </div>
+
+<!-- ═══ 본부 현황 ═══ -->
+<div class="main-pane" id="mpHQ">
+<div class="cards">
+<div class="cd c1"><div class="lb">등록 지사</div><div class="vl" id="hqOfficeCount">-</div><div class="sb">데이터 등록 / 전체</div></div>
+<div class="cd c2"><div class="lb">자본 배정예산 합계</div><div class="vl" id="hqCapBudget">-</div><div class="sb">전 지사 합산</div></div>
+<div class="cd c5"><div class="lb">자본 집행율</div><div class="vl" id="hqCapRate">-</div><div class="sb">전 지사 평균</div></div>
+<div class="cd c3"><div class="lb">손익 배정예산 합계</div><div class="vl" id="hqRevBudget">-</div><div class="sb">전 지사 합산</div></div>
+</div>
+<div class="stabs">
+<button class="st on" onclick="subTabHQ(this,'hqCapP')">자본 비교</button>
+<button class="st" onclick="subTabHQ(this,'hqRevP')">손익 비교</button>
+</div>
+<div class="sp2 on" id="hqCapP">
+<div class="tb"><h3>지사별 자본 예산 현황</h3>
+<div style="text-align:right;margin-bottom:6px"><button class="ubtn" onclick="loadHQData()" style="font-size:11px;padding:4px 12px">&#8635; 새로고침</button></div>
+<div class="sc"><table id="tHQCap">
+<thead><tr><th>지사</th><th>배정예산(A)</th><th>집행실적(D)</th><th>잔액(E)</th><th>집행율</th><th>진행중(F)</th><th>최종예상(G)</th><th>예상집행율</th><th>최종저장</th></tr></thead>
+<tbody></tbody>
+<tfoot><tr id="hqCapTotalRow"><td>합계</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td></td></tr></tfoot>
+</table></div></div>
+</div>
+<div class="sp2" id="hqRevP">
+<div class="tb"><h3>지사별 손익 예산 현황</h3>
+<div style="text-align:right;margin-bottom:6px"><button class="ubtn" onclick="loadHQData()" style="font-size:11px;padding:4px 12px">&#8635; 새로고침</button></div>
+<div class="sc"><table id="tHQRev">
+<thead><tr><th>지사</th><th>배정예산(A)</th><th>집행실적(D)</th><th>잔액(E)</th><th>집행율</th><th>진행중(F)</th><th>최종예상(G)</th><th>예상집행율</th><th>최종저장</th></tr></thead>
+<tbody></tbody>
+<tfoot><tr id="hqRevTotalRow"><td>합계</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td></td></tr></tfoot>
+</table></div></div>
+</div>
+</div>
+
 </div><!-- /dashboardContent -->
+
+<!-- ═══ 지사 선택 모달 ═══ -->
+<div class="modal-overlay" id="officeModal" onclick="if(event.target===this)this.classList.remove('on')">
+<div class="modal-box" style="max-width:520px">
+<div class="modal-head"><h2>소속 지사 선택</h2><div class="modal-actions"><button class="btn-close" onclick="document.getElementById('officeModal').classList.remove('on')">닫기</button></div></div>
+<div class="modal-body" style="padding:24px">
+<p style="margin-bottom:16px;color:var(--text2);font-size:13px">소속 지사를 선택해주세요. 선택한 지사는 브라우저에 저장됩니다.</p>
+<div id="officeList" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px"></div>
+<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+<div style="display:flex;gap:6px">
+<input type="password" id="hqPwInput" placeholder="본부 비밀번호" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+<button class="ubtn" style="padding:10px 16px;background:#7C3AED;color:#fff;border-color:#7C3AED;font-size:13px;white-space:nowrap" id="btnHQLogin">본부 접속</button>
+</div>
+<div id="hqPwError" style="display:none;color:#e74c3c;font-size:11px;margin-top:6px">비밀번호가 틀렸습니다.</div>
+</div>
+</div>
+</div>
+</div>
 
 <!-- ═══ 사용법 모달 ═══ -->
 <div class="modal-overlay" id="guideModal">
@@ -1225,13 +1328,18 @@ tfoot td:first-child,tfoot td:nth-child(2){text-align:left}
 </div>
 
 <script>
-let D=null,CH={};
+let D=null,CH={},CURRENT_OFFICE='';
+
+function getCookie(n){const v=document.cookie.match('(^|;)\\s*'+n+'\\s*=\\s*([^;]+)');return v?decodeURIComponent(v.pop()):''}
+function setCookie(n,v,d){const dt=new Date();dt.setTime(dt.getTime()+d*86400000);document.cookie=n+'='+encodeURIComponent(v)+';expires='+dt.toUTCString()+';path=/'}
+function apiUrl(p){const s=p.includes('?')?'&':'?';return p+s+'office='+encodeURIComponent(CURRENT_OFFICE)}
 
 function switchMain(t){
     document.querySelectorAll('.mt').forEach(b=>b.classList.add('off'));
     document.querySelectorAll('.main-pane').forEach(p=>p.classList.remove('on'));
     if(t==='cap'){document.getElementById('mtCap').classList.remove('off');document.getElementById('mpCap').classList.add('on')}
-    else{document.getElementById('mtRev').classList.remove('off');document.getElementById('mpRev').classList.add('on')}
+    else if(t==='rev'){document.getElementById('mtRev').classList.remove('off');document.getElementById('mpRev').classList.add('on')}
+    else if(t==='hq'){document.getElementById('mtHQ').classList.remove('off');document.getElementById('mpHQ').classList.add('on');loadHQData()}
 }
 
 function subTab(prefix,btn,pane){
@@ -1255,7 +1363,7 @@ document.getElementById('fi').addEventListener('change',async e=>{
             });
         });
     }
-    const fd=new FormData();fd.append('file',f);
+    const fd=new FormData();fd.append('file',f);fd.append('office',CURRENT_OFFICE);
     try{const r=await fetch('/api/analyze',{method:'POST',body:fd});const j=await r.json();if(j.error){alert(j.error);document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';return}D=j;
         // 배정예산 복원
         ['capital','revenue'].forEach(dk=>{
@@ -1275,18 +1383,19 @@ document.getElementById('fi').addEventListener('change',async e=>{
         });
         document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block';document.getElementById('refreshBtn').style.display='inline-block';renderAll();updateSummaryCards('cap');updateSummaryCards('rev')}
     catch(err){alert(err.message);document.getElementById('loadingState').style.display='none';document.getElementById('dashboardContent').style.display='block'}
+    document.getElementById('fi').value='';
 });
 
 async function doRefresh(){
-    // 업로드 데이터 + 배정예산 전체 초기화
-    try{await fetch('/api/reset');}catch(e){}
+    try{await fetch(apiUrl('/api/reset'));}catch(e){}
     document.getElementById('fn').textContent='';
+    document.getElementById('fi').value='';
     ['cap','rev'].forEach(p=>{
         ['AiPanel','ReallocPanel'].forEach(s=>{
             const el=document.getElementById(p+s);if(el)el.style.display='none';
         });
     });
-    try{const r=await fetch('/api/init');const j=await r.json();D=j;renderAll();updateSummaryCards('cap');updateSummaryCards('rev');}catch(e){}
+    try{const r=await fetch(apiUrl('/api/init'));const j=await r.json();D=j;renderAll();updateSummaryCards('cap');updateSummaryCards('rev');}catch(e){}
 }
 
 const fm=v=>(v/1e6).toLocaleString('ko-KR',{maximumFractionDigits:0})+' 백만';
@@ -1626,8 +1735,13 @@ function saveBudgets(sec){
     updateSummaryCards(sec);
     if(sec==='cap'){renderEarlyExec();renderCapitalChart();renderReallocation()}
     else{renderRevenueChart();renderReallocation()}
-    // 서버에 저장 (기본항목 금액 + 사용자추가 항목 전체)
-    const saveData={capital:{budgets:{},custom_items:[]},revenue:{budgets:{},custom_items:[]}};
+    // 서버에 저장 (기본항목 금액 + 사용자추가 항목 전체 + 분석 스냅샷)
+    const saveData={office:CURRENT_OFFICE,capital:{budgets:{},custom_items:[]},revenue:{budgets:{},custom_items:[]},
+        analysis_snapshot:{
+            capital:{summary:D.capital.summary,budget_comparison:D.capital.budget_comparison},
+            revenue:{summary:D.revenue.summary,budget_comparison:D.revenue.budget_comparison},
+            projects_count:D.projects?D.projects.length:0
+        }};
     ['capital','revenue'].forEach(k=>{
         saveData[k].codes={};
         (D[k].budget_comparison||[]).forEach(r=>{
@@ -1640,7 +1754,7 @@ function saveBudgets(sec){
         });
     });
     const btn=event.target;
-    fetch('/api/save-budgets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(saveData)})
+    fetch(apiUrl('/api/save-budgets'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(saveData)})
     .then(r=>r.json()).then(j=>{
         if(j.ok){btn.textContent='저장됨!';btn.style.background='var(--green)';btn.style.borderColor='var(--green)';}
         else{btn.textContent='저장실패';btn.style.background='#e74c3c';btn.style.borderColor='#e74c3c';}
@@ -1796,11 +1910,105 @@ async function fetchLogs(){
 }
 document.getElementById('logDetails').addEventListener('toggle',function(){if(this.open)fetchLogs()});
 
+// ═══════════════════════════════════════
+// 지사 선택
+// ═══════════════════════════════════════
+async function initOffice(){
+    CURRENT_OFFICE=getCookie('budget_office');
+    if(CURRENT_OFFICE){
+        document.getElementById('officeIndicator').textContent=CURRENT_OFFICE;
+        return true;
+    }
+    const r=await fetch('/api/offices');const j=await r.json();
+    const list=document.getElementById('officeList');list.innerHTML='';
+    j.offices.forEach(name=>{
+        const btn=document.createElement('button');
+        btn.className='ubtn';btn.style.cssText='padding:10px;font-size:13px;border-color:var(--navy2);color:var(--navy2)';
+        btn.textContent=name;
+        btn.onclick=()=>selectOffice(name);
+        list.appendChild(btn);
+    });
+    document.getElementById('btnHQLogin').onclick=()=>loginHQ();
+    document.getElementById('hqPwInput').addEventListener('keydown',e=>{if(e.key==='Enter')loginHQ()});
+    document.getElementById('officeModal').classList.add('on');
+    return false;
+}
+function selectOffice(name){
+    CURRENT_OFFICE=name;
+    setCookie('budget_office',name,365);
+    document.getElementById('officeModal').classList.remove('on');
+    document.getElementById('officeIndicator').textContent=name;
+    if(name==='본부'){switchMain('hq')}
+    loadInitData();
+}
+async function loginHQ(){
+    const pw=document.getElementById('hqPwInput').value;
+    const errEl=document.getElementById('hqPwError');
+    try{
+        const r=await fetch('/api/hq-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+        if(r.ok){errEl.style.display='none';selectOffice('본부')}
+        else{errEl.style.display='block';document.getElementById('hqPwInput').focus()}
+    }catch(e){errEl.style.display='block'}
+}
+function changeOffice(){
+    setCookie('budget_office','',-1);
+    CURRENT_OFFICE='';
+    initOffice();
+}
+async function loadInitData(){
+    try{const r=await fetch(apiUrl('/api/init'));const j=await r.json();D=j;renderAll()}catch(e){}
+}
+
+// ═══════════════════════════════════════
+// 본부 탭 (HQ)
+// ═══════════════════════════════════════
+let HQ_DATA=null;
+function subTabHQ(btn,pane){
+    btn.closest('.stabs').querySelectorAll('.st').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+    document.getElementById('mpHQ').querySelectorAll('.sp2').forEach(p=>p.classList.remove('on'));
+    document.getElementById(pane).classList.add('on');
+}
+async function loadHQData(){
+    try{const r=await fetch('/api/hq-summary');HQ_DATA=await r.json();renderHQ()}catch(e){}
+}
+function renderHQ(){
+    if(!HQ_DATA)return;
+    const offices=HQ_DATA.offices;
+    const withData=offices.filter(o=>o.saved_at);
+    document.getElementById('hqOfficeCount').textContent=withData.length+' / '+offices.length;
+    const capTotal=offices.reduce((s,o)=>s+((o.capital.summary||{})['배정예산']||0),0);
+    const capExec=offices.reduce((s,o)=>s+((o.capital.summary||{})['집행실적']||0),0);
+    const revTotal=offices.reduce((s,o)=>s+((o.revenue.summary||{})['배정예산']||0),0);
+    document.getElementById('hqCapBudget').textContent=fm(capTotal);
+    document.getElementById('hqCapRate').textContent=capTotal?fp(capExec/capTotal*100):'-';
+    document.getElementById('hqRevBudget').textContent=fm(revTotal);
+    renderHQTable('capital','tHQCap','hqCapTotalRow');
+    renderHQTable('revenue','tHQRev','hqRevTotalRow');
+}
+function renderHQTable(dataKey,tableId,totalRowId){
+    const offices=HQ_DATA.offices;
+    const tb=document.querySelector('#'+tableId+' tbody');tb.innerHTML='';
+    let totA=0,totD=0,totE=0,totF=0,totG=0;
+    offices.forEach(o=>{
+        const s=(o[dataKey]||{}).summary||{};
+        const a=s['배정예산']||0,d=s['집행실적']||0,e=a-d;
+        const f=s['진행중공사비']||0,g=s['예상집행']||0;
+        const dr=a?+(d/a*100).toFixed(1):0,gr=a?+(g/a*100).toFixed(1):0;
+        totA+=a;totD+=d;totE+=e;totF+=f;totG+=g;
+        const tr=document.createElement('tr');
+        const saved=o.saved_at?new Date(o.saved_at).toLocaleDateString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'-';
+        tr.innerHTML='<td>'+o.office+'</td><td>'+(a?fw(a):'-')+'</td><td>'+(d?fw(d):'-')+'</td><td class="'+(a?clr(e):'')+'">'+(a?fw(e):'-')+'</td><td>'+(a?br(dr):'-')+'</td><td>'+(f?fw(f):'-')+'</td><td>'+(g?fw(g):'-')+'</td><td>'+(a?br(gr):'-')+'</td><td style="font-size:10px;color:var(--text3)">'+saved+'</td>';
+        tb.appendChild(tr);
+    });
+    const tDR=totA?+(totD/totA*100).toFixed(1):0,tGR=totA?+(totG/totA*100).toFixed(1):0;
+    document.getElementById(totalRowId).innerHTML='<td>합계</td><td>'+fw(totA)+'</td><td>'+fw(totD)+'</td><td class="'+clr(totE)+'">'+fw(totE)+'</td><td>'+br(tDR)+'</td><td>'+fw(totF)+'</td><td>'+fw(totG)+'</td><td>'+br(tGR)+'</td><td></td>';
+}
+
 window.addEventListener('DOMContentLoaded',async()=>{
     const now=new Date();const y=now.getFullYear();const m=String(now.getMonth()+1).padStart(2,'0');const d=String(now.getDate()).padStart(2,'0');const wd=['일','월','화','수','목','금','토'][now.getDay()];
     document.getElementById('today').textContent=y+'.'+m+'.'+d+' ('+wd+')';
-    // 빈 데이터로 대시보드 바로 표시 (배정예산 먼저 입력 가능)
-    try{const r=await fetch('/api/init');const j=await r.json();D=j;renderAll()}catch(e){}
+    const hasOffice=await initOffice();
+    if(hasOffice) loadInitData();
 });
 </script>
 </body>
@@ -1867,9 +2075,45 @@ def _apply_saved_budgets(comp_list, section_key, saved):
             })
 
 
+@app.route('/api/offices')
+def api_offices():
+    return jsonify({'offices': _get_offices(), 'hq_name': HQ_NAME})
+
+
+@app.route('/api/hq-login', methods=['POST'])
+def api_hq_login():
+    data = request.get_json()
+    if data.get('password') == HQ_PASSWORD:
+        return jsonify({'ok': True})
+    return jsonify({'ok': False}), 401
+
+
+@app.route('/api/hq-summary')
+def api_hq_summary():
+    """본부 탭: 전 지사 저장 데이터 요약"""
+    offices = _get_offices()
+    results = []
+    for name in offices:
+        af = _office_analysis_file(name)
+        entry = {'office': name, 'saved_at': '', 'capital': {}, 'revenue': {}}
+        if os.path.exists(af):
+            try:
+                with open(af, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                entry['saved_at'] = data.get('saved_at', '')
+                entry['capital'] = data.get('capital', {})
+                entry['revenue'] = data.get('revenue', {})
+            except Exception:
+                pass
+        results.append(entry)
+    return jsonify({'offices': results, 'hq_name': HQ_NAME})
+
+
 @app.route('/api/init')
 def api_init():
     """배정예산 입력용 빈 데이터 구조 반환 (저장된 배정예산 복원)"""
+    office = request.args.get('office', '')
+
     def _empty_comp(budget_dict):
         return [{
             '사업코드': bcode, '예산과목': bname,
@@ -1895,8 +2139,8 @@ def api_init():
     cap_comp = _empty_comp(BUDGET_CAPITAL)
     rev_comp = _empty_comp(BUDGET_REVENUE)
 
-    # 저장된 배정예산 복원
-    saved = _load_saved_budgets()
+    # 저장된 배정예산 복원 (지사별)
+    saved = _load_office_budgets(office) if office else _load_saved_budgets()
     _apply_saved_budgets(cap_comp, 'capital', saved)
     _apply_saved_budgets(rev_comp, 'revenue', saved)
 
@@ -1915,11 +2159,22 @@ def api_init():
 
 @app.route('/api/save-budgets', methods=['POST'])
 def api_save_budgets():
-    """배정예산을 서버에 저장"""
+    """배정예산을 서버에 저장 (지사별)"""
     data = request.get_json()
+    office = data.pop('office', '')
+    analysis_snapshot = data.pop('analysis_snapshot', None)
     try:
-        with open(BUDGET_FILE, 'w', encoding='utf-8') as f:
+        # 배정예산 저장
+        budget_path = _office_budget_file(office) if office else BUDGET_FILE
+        with open(budget_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        # 분석 스냅샷 저장 (본부 탭용)
+        if office and analysis_snapshot:
+            analysis_snapshot['saved_at'] = datetime.now().isoformat()
+            analysis_snapshot['office'] = office
+            with open(_office_analysis_file(office), 'w', encoding='utf-8') as f:
+                json.dump(analysis_snapshot, f, ensure_ascii=False, indent=2)
+        _log(f'[{office or "기본"}] 배정예산 저장 완료')
         return jsonify({'ok': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1927,22 +2182,23 @@ def api_save_budgets():
 
 @app.route('/api/analyze', methods=['POST'])
 def api_analyze():
-    _log('파일 업로드 요청')
+    office = request.form.get('office', '')
+    _log(f'[{office or "기본"}] 파일 업로드 요청')
     if 'file' not in request.files:
         _log('파일 없음')
         return jsonify({'error': '파일이 없습니다.'}), 400
     f = request.files['file']
     if f.filename == '':
         return jsonify({'error': '파일명이 비어있습니다.'}), 400
-    global LAST_FILE
-    filepath = os.path.join(UPLOAD_FOLDER, f.filename)
+    upload_dir = _office_upload_dir(office) if office else UPLOAD_FOLDER
+    filepath = os.path.join(upload_dir, f.filename)
     f.save(filepath)
-    LAST_FILE = filepath
-    _log(f'파일 저장: {f.filename}')
+    LAST_FILES[office or '_default'] = filepath
+    _log(f'[{office or "기본"}] 파일 저장: {f.filename}')
     try:
         result = parse_and_analyze(filepath)
-        _log(f"파싱 완료: 프로젝트 {len(result.get('projects',[]))}건")
-        saved = _load_saved_budgets()
+        _log(f"[{office or '기본'}] 파싱 완료: 프로젝트 {len(result.get('projects',[]))}건")
+        saved = _load_office_budgets(office) if office else _load_saved_budgets()
         _apply_saved_budgets(result['capital']['budget_comparison'], 'capital', saved)
         _apply_saved_budgets(result['revenue']['budget_comparison'], 'revenue', saved)
         cap_comp = result['capital']['budget_comparison']
@@ -1951,38 +2207,35 @@ def api_analyze():
         result['ai_analysis']['revenue']['reallocation'] = _reallocation_recommendations(rev_comp)
         cap_yakjung = sum(c['약정금액'] for c in cap_comp)
         rev_yakjung = sum(c['약정금액'] for c in rev_comp)
-        _log(f'약정금액 - 자본: {cap_yakjung:,.0f} / 손익: {rev_yakjung:,.0f}')
-        _log('분석 완료, 응답 전송')
+        _log(f'[{office or "기본"}] 약정금액 - 자본: {cap_yakjung:,.0f} / 손익: {rev_yakjung:,.0f}')
+        _log(f'[{office or "기본"}] 분석 완료')
         return jsonify(result)
     except Exception as e:
-        _log(f'분석 오류: {str(e)}')
+        _log(f'[{office or "기본"}] 분석 오류: {str(e)}')
         return jsonify({'error': f'분석 오류: {str(e)}'}), 500
 
 
 @app.route('/api/reset')
 def api_reset():
-    """업로드 파일 및 배정예산 전체 초기화"""
-    global LAST_FILE
-    LAST_FILE = None
-    # budgets.json 초기화
-    try:
-        with open(BUDGET_FILE, 'w', encoding='utf-8') as f:
-            json.dump({}, f)
-    except Exception:
-        pass
+    """업로드 참조만 초기화 (저장된 배정예산/분석 데이터는 유지)"""
+    office = request.args.get('office', '')
+    key = office or '_default'
+    LAST_FILES.pop(key, None)
     return jsonify({'ok': True})
 
 
 @app.route('/api/refresh')
 def api_refresh():
-    if not LAST_FILE or not os.path.exists(LAST_FILE):
+    office = request.args.get('office', '')
+    key = office or '_default'
+    last_file = LAST_FILES.get(key)
+    if not last_file or not os.path.exists(last_file):
         return jsonify({'error': '업로드된 파일이 없습니다.'}), 404
     try:
-        result = parse_and_analyze(LAST_FILE)
-        saved = _load_saved_budgets()
+        result = parse_and_analyze(last_file)
+        saved = _load_office_budgets(office) if office else _load_saved_budgets()
         _apply_saved_budgets(result['capital']['budget_comparison'], 'capital', saved)
         _apply_saved_budgets(result['revenue']['budget_comparison'], 'revenue', saved)
-        # 배정예산 적용 후 AI 분석 수행
         cap_comp = result['capital']['budget_comparison']
         rev_comp = result['revenue']['budget_comparison']
         result['ai_analysis']['capital']['reallocation'] = _reallocation_recommendations(cap_comp)
