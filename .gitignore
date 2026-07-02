@@ -6,3 +6,6 @@ data/*/analysis.json
 ~$*
 *.pyc
 budgets.json
+build/
+dist/
+*.spec

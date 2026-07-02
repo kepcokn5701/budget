@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, json, logging
+import os, sys, json, logging, threading, webbrowser
 from flask import Flask, request, jsonify, render_template_string
 import pandas as pd
 from datetime import datetime
@@ -7,7 +7,10 @@ from collections import deque
 
 app = Flask(__name__)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 BUDGET_FILE = os.path.join(BASE_DIR, 'budgets.json')
@@ -2094,4 +2097,9 @@ def api_logs():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5005)
+    is_frozen = getattr(sys, 'frozen', False)
+    if is_frozen:
+        threading.Timer(1.5, lambda: webbrowser.open('http://localhost:5005')).start()
+        app.run(debug=False, host='0.0.0.0', port=5005)
+    else:
+        app.run(debug=True, host='0.0.0.0', port=5005)
